@@ -1,0 +1,116 @@
+# Network Connectivity Investigation Template
+# Use this when services cannot reach each other or external dependencies
+
+id: network-connectivity-investigation
+name: Network Connectivity Investigation
+description: Diagnose network connectivity issues between services or to external endpoints
+category: network
+tags:
+  - network
+  - connectivity
+  - dns
+  - timeout
+  - connection
+  - refused
+  - unreachable
+
+author: autoops-architect
+version: "1.0"
+
+parameters:
+  service: "{{service}}"
+  target_service: ""
+  duration: "1h"
+
+nodes:
+  - id: collect-connection-errors
+    name: "Collect connection error logs"
+    description: "Gather logs related to connection failures"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      patterns:
+        - "connection refused"
+        - "connection timed out"
+        - "no route to host"
+        - "dns resolution failed"
+      duration: "{{duration}}"
+
+  - id: query-network-metrics
+    name: "Query network metrics"
+    description: "Get network error rates and connection pool metrics"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "tcp_connection_errors_total"
+      additional_metrics:
+        - "tcp_connections_active"
+        - "dns_lookup_duration_seconds"
+        - "http_client_request_errors_total"
+
+  - id: check-dns-resolution
+    name: "Check DNS resolution"
+    description: "Verify DNS is resolving correctly"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "dns_lookup_failures_total"
+
+  - id: check-load-balancer
+    name: "Check load balancer health"
+    description: "Verify load balancer and endpoint health"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "load_balancer_healthy_hosts"
+      include_targets: true
+
+  - id: collect-dependency-logs
+    name: "Collect dependency service logs"
+    description: "Check target service for issues"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{target_service}}"
+      level: "error"
+      duration: "{{duration}}"
+
+  - id: analyze-connectivity
+    name: "Analyze connectivity patterns"
+    description: "Correlate network errors with infrastructure events"
+    type: analysis
+    tool: analysis
+    params:
+      analysis_type: "network_analysis"
+      include_infrastructure_events: true
+
+  - id: generate-summary
+    name: "Generate connectivity report"
+    description: "Summary of network issues and recommendations"
+    type: summary
+    tool: summary
+    params:
+      format: "markdown"
+      include_recommendations: true
+      sections:
+        - "connectivity_status"
+        - "error_analysis"
+        - "remediation_steps"
+
+edges:
+  - from_node_id: collect-connection-errors
+    to_node_id: analyze-connectivity
+  - from_node_id: query-network-metrics
+    to_node_id: analyze-connectivity
+  - from_node_id: check-dns-resolution
+    to_node_id: analyze-connectivity
+  - from_node_id: check-load-balancer
+    to_node_id: analyze-connectivity
+  - from_node_id: collect-dependency-logs
+    to_node_id: analyze-connectivity
+  - from_node_id: analyze-connectivity
+    to_node_id: generate-summary

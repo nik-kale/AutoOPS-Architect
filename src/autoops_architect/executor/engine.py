@@ -1,6 +1,8 @@
 """Workflow execution engine."""
 
 import asyncio
+import operator
+import re
 from datetime import datetime
 from typing import Any, Callable, Optional, Protocol
 
@@ -11,8 +13,156 @@ from autoops_architect.models.execution import (
     NodeResult,
     WorkflowRunResult,
 )
-from autoops_architect.models.workflow import Node, WorkflowGraph
+from autoops_architect.models.workflow import Edge, Node, WorkflowGraph
 from autoops_architect.tools.base import Tool, ToolRegistry, ToolResult, ToolStatus
+
+
+class ConditionEvaluator:
+    """
+    Evaluates conditional expressions for edge conditions.
+
+    Supports simple expressions like:
+    - "{{ node_id.output_key > 10 }}"
+    - "{{ error_count > 5 }}"
+    - "{{ status == 'success' }}"
+    - "{{ logs.error_count >= 3 and logs.warn_count > 0 }}"
+    """
+
+    # Supported operators
+    OPERATORS = {
+        "==": operator.eq,
+        "!=": operator.ne,
+        ">": operator.gt,
+        ">=": operator.ge,
+        "<": operator.lt,
+        "<=": operator.le,
+        "and": lambda a, b: a and b,
+        "or": lambda a, b: a or b,
+        "not": lambda a: not a,
+        "in": lambda a, b: a in b,
+    }
+
+    def __init__(self, context: dict[str, Any]) -> None:
+        """
+        Initialize the evaluator with execution context.
+
+        Args:
+            context: Dictionary mapping node IDs to their outputs.
+        """
+        self.context = context
+
+    def evaluate(self, condition: str) -> bool:
+        """
+        Evaluate a condition expression.
+
+        Args:
+            condition: Condition expression (e.g., "{{ error_count > 5 }}")
+
+        Returns:
+            Boolean result of the condition evaluation.
+        """
+        if not condition or not condition.strip():
+            return True  # No condition means always true
+
+        # Extract expression from {{ }} if present
+        match = re.match(r"\{\{\s*(.+?)\s*\}\}", condition.strip())
+        if match:
+            expression = match.group(1)
+        else:
+            expression = condition.strip()
+
+        try:
+            return self._evaluate_expression(expression)
+        except Exception:
+            # If evaluation fails, default to True (execute the edge)
+            return True
+
+    def _evaluate_expression(self, expression: str) -> bool:
+        """Evaluate a simple expression."""
+        # Handle 'and' / 'or' first (lowest precedence)
+        if " and " in expression:
+            parts = expression.split(" and ", 1)
+            return self._evaluate_expression(parts[0]) and self._evaluate_expression(parts[1])
+
+        if " or " in expression:
+            parts = expression.split(" or ", 1)
+            return self._evaluate_expression(parts[0]) or self._evaluate_expression(parts[1])
+
+        # Handle 'not'
+        if expression.strip().startswith("not "):
+            return not self._evaluate_expression(expression[4:])
+
+        # Handle comparison operators
+        for op_str, op_func in [
+            (">=", operator.ge),
+            ("<=", operator.le),
+            ("!=", operator.ne),
+            ("==", operator.eq),
+            (">", operator.gt),
+            ("<", operator.lt),
+            (" in ", lambda a, b: a in b),
+        ]:
+            if op_str in expression:
+                parts = expression.split(op_str, 1)
+                left = self._resolve_value(parts[0].strip())
+                right = self._resolve_value(parts[1].strip())
+                return op_func(left, right)
+
+        # If no operator, treat as a boolean check
+        value = self._resolve_value(expression.strip())
+        return bool(value)
+
+    def _resolve_value(self, token: str) -> Any:
+        """Resolve a token to its actual value."""
+        # Handle string literals
+        if (token.startswith("'") and token.endswith("'")) or \
+           (token.startswith('"') and token.endswith('"')):
+            return token[1:-1]
+
+        # Handle numeric literals
+        try:
+            if "." in token:
+                return float(token)
+            return int(token)
+        except ValueError:
+            pass
+
+        # Handle boolean literals
+        if token.lower() == "true":
+            return True
+        if token.lower() == "false":
+            return False
+        if token.lower() == "none":
+            return None
+
+        # Handle context references (node_id.field or just field)
+        return self._get_context_value(token)
+
+    def _get_context_value(self, path: str) -> Any:
+        """Get a value from the execution context by path."""
+        parts = path.split(".")
+
+        if len(parts) == 1:
+            # Single field - search in all node outputs
+            field = parts[0]
+            for node_outputs in self.context.values():
+                if isinstance(node_outputs, dict) and field in node_outputs:
+                    return node_outputs[field]
+            return None
+
+        # node_id.field.subfield...
+        node_id = parts[0]
+        if node_id not in self.context:
+            return None
+
+        value = self.context[node_id]
+        for part in parts[1:]:
+            if isinstance(value, dict):
+                value = value.get(part)
+            else:
+                return None
+
+        return value
 
 
 class ExecutionCallback(Protocol):
@@ -170,6 +320,14 @@ class WorkflowExecutor:
         # Track completed nodes for dependency checking
         completed_nodes: set[str] = set()
         failed_nodes: set[str] = set()
+        skipped_by_condition: set[str] = set()
+
+        # Build edge lookup for condition checking
+        edges_to_node: dict[str, list[Edge]] = {}
+        for edge in workflow.edges:
+            if edge.to_node_id not in edges_to_node:
+                edges_to_node[edge.to_node_id] = []
+            edges_to_node[edge.to_node_id].append(edge)
 
         # Execute nodes in order
         for node in execution_order:
@@ -178,6 +336,32 @@ class WorkflowExecutor:
             # Check if dependencies are satisfied
             deps = workflow.get_dependencies(node.id)
             deps_failed = any(d in failed_nodes for d in deps)
+            deps_skipped_by_condition = all(d in skipped_by_condition for d in deps) if deps else False
+
+            # Check edge conditions - all incoming edges with conditions must pass
+            incoming_edges = edges_to_node.get(node.id, [])
+            edge_conditions_met = True
+            if incoming_edges:
+                evaluator = ConditionEvaluator(self._execution_context)
+                for edge in incoming_edges:
+                    if edge.condition:
+                        if not evaluator.evaluate(edge.condition):
+                            edge_conditions_met = False
+                            break
+
+            if not edge_conditions_met:
+                # Skip this node - condition not met
+                node_result.mark_skipped(f"Edge condition not met")
+                skipped_by_condition.add(node.id)
+                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                continue
+
+            if deps_skipped_by_condition:
+                # All dependencies were skipped by condition, skip this too
+                node_result.mark_skipped("All dependencies skipped by condition")
+                skipped_by_condition.add(node.id)
+                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                continue
 
             if deps_failed and not node.continue_on_failure:
                 # Skip this node - dependency failed
@@ -302,6 +486,209 @@ class WorkflowExecutor:
         """Get outputs from all nodes this node depends on."""
         # This would use the workflow graph, but we track it in execution_context
         return dict(self._execution_context)
+
+    async def execute_parallel(
+        self,
+        workflow: WorkflowGraph,
+        initial_context: Optional[dict[str, Any]] = None,
+    ) -> WorkflowRunResult:
+        """
+        Execute a workflow graph with parallel node execution.
+
+        Independent nodes (nodes at the same level with no dependencies
+        on each other) are executed concurrently up to max_concurrency.
+
+        Args:
+            workflow: The workflow to execute.
+            initial_context: Optional initial context data.
+
+        Returns:
+            WorkflowRunResult with all node results and summary.
+        """
+        # Initialize result tracking
+        run_result = WorkflowRunResult(
+            workflow_id=workflow.id,
+            goal_description=workflow.goal_description,
+            started_at=datetime.utcnow(),
+        )
+
+        # Initialize execution context
+        self._execution_context = dict(initial_context) if initial_context else {}
+
+        # Create node results map
+        node_results: dict[str, NodeResult] = {}
+        for node in workflow.nodes:
+            node_results[node.id] = NodeResult(node_id=node.id)
+
+        # Compute node levels (distance from root nodes)
+        node_levels = self._compute_node_levels(workflow)
+
+        # Group nodes by level
+        levels: dict[int, list[Node]] = {}
+        for node in workflow.nodes:
+            level = node_levels.get(node.id, 0)
+            if level not in levels:
+                levels[level] = []
+            levels[level].append(node)
+
+        # Track status
+        completed_nodes: set[str] = set()
+        failed_nodes: set[str] = set()
+        skipped_nodes: set[str] = set()
+
+        # Build edge lookup for condition checking
+        edges_to_node: dict[str, list[Edge]] = {}
+        for edge in workflow.edges:
+            if edge.to_node_id not in edges_to_node:
+                edges_to_node[edge.to_node_id] = []
+            edges_to_node[edge.to_node_id].append(edge)
+
+        # Execute level by level
+        for level in sorted(levels.keys()):
+            nodes_at_level = levels[level]
+
+            # Filter nodes that are ready to execute
+            ready_nodes = []
+            for node in nodes_at_level:
+                node_result = node_results[node.id]
+
+                # Check dependencies
+                deps = workflow.get_dependencies(node.id)
+                deps_failed = any(d in failed_nodes for d in deps)
+                deps_skipped = all(d in skipped_nodes for d in deps) if deps else False
+
+                if deps_failed and not node.continue_on_failure:
+                    node_result.mark_skipped("Dependency failed")
+                    skipped_nodes.add(node.id)
+                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                    continue
+
+                if deps_skipped:
+                    node_result.mark_skipped("All dependencies skipped")
+                    skipped_nodes.add(node.id)
+                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                    continue
+
+                # Check edge conditions
+                incoming_edges = edges_to_node.get(node.id, [])
+                conditions_met = True
+                if incoming_edges:
+                    evaluator = ConditionEvaluator(self._execution_context)
+                    for edge in incoming_edges:
+                        if edge.condition and not evaluator.evaluate(edge.condition):
+                            conditions_met = False
+                            break
+
+                if not conditions_met:
+                    node_result.mark_skipped("Edge condition not met")
+                    skipped_nodes.add(node.id)
+                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                    continue
+
+                # Check approval
+                if node.requires_human_approval and self.config.require_approval_for_dangerous:
+                    if not self.config.auto_approve:
+                        if self.approval_callback:
+                            if not self.approval_callback(node):
+                                node_result.mark_skipped("Approval denied")
+                                skipped_nodes.add(node.id)
+                                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                                continue
+                        else:
+                            node_result.mark_skipped("No approval mechanism")
+                            skipped_nodes.add(node.id)
+                            self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+                            continue
+
+                ready_nodes.append(node)
+
+            if not ready_nodes:
+                continue
+
+            # Execute ready nodes in parallel with concurrency limit
+            semaphore = asyncio.Semaphore(self.config.max_concurrency)
+
+            async def execute_with_semaphore(node: Node) -> None:
+                async with semaphore:
+                    node_result = node_results[node.id]
+                    self._notify_status(node.id, ExecutionStatus.RUNNING)
+                    node_result.mark_started()
+
+                    try:
+                        if self.config.dry_run:
+                            await self._dry_run_node(node, node_result)
+                        else:
+                            await self._execute_node(node, node_result)
+
+                        completed_nodes.add(node.id)
+                        self._execution_context[node.id] = node_result.outputs
+
+                    except Exception as e:
+                        node_result.mark_failed(str(e))
+                        failed_nodes.add(node.id)
+
+                    self._notify_status(node.id, node_result.status, node_result)
+
+            # Run all ready nodes concurrently
+            await asyncio.gather(*[execute_with_semaphore(node) for node in ready_nodes])
+
+            # Check if we should stop due to failure
+            if failed_nodes and self.config.stop_on_failure:
+                # Mark remaining nodes as skipped
+                for remaining_level in range(level + 1, max(levels.keys()) + 1):
+                    if remaining_level in levels:
+                        for node in levels[remaining_level]:
+                            if node.id not in completed_nodes and node.id not in failed_nodes:
+                                node_results[node.id].mark_skipped("Execution stopped due to failure")
+                                skipped_nodes.add(node.id)
+                break
+
+        # Finalize run result
+        run_result.node_results = list(node_results.values())
+        run_result.finished_at = datetime.utcnow()
+        run_result.overall_status = run_result.compute_overall_status()
+        run_result.summary = run_result.generate_summary()
+
+        return run_result
+
+    def _compute_node_levels(self, workflow: WorkflowGraph) -> dict[str, int]:
+        """
+        Compute the level (depth) of each node in the workflow.
+
+        Root nodes have level 0. Each subsequent level is determined by
+        the maximum level of all dependencies plus 1.
+
+        Args:
+            workflow: The workflow graph.
+
+        Returns:
+            Dictionary mapping node IDs to their levels.
+        """
+        levels: dict[str, int] = {}
+
+        # Start with root nodes at level 0
+        root_nodes = workflow.get_root_nodes()
+        for node in root_nodes:
+            levels[node.id] = 0
+
+        # BFS to compute levels
+        queue = list(root_nodes)
+        while queue:
+            node = queue.pop(0)
+            current_level = levels.get(node.id, 0)
+
+            # Get dependents
+            for dependent_id in workflow.get_dependents(node.id):
+                # Dependent level is max of all dependency levels + 1
+                new_level = current_level + 1
+                if dependent_id not in levels or levels[dependent_id] < new_level:
+                    levels[dependent_id] = new_level
+                    # Add to queue to process its dependents
+                    dependent_node = workflow.get_node(dependent_id)
+                    if dependent_node:
+                        queue.append(dependent_node)
+
+        return levels
 
     def execute_sync(
         self,

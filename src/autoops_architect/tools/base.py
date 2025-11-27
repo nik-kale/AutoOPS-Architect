@@ -336,6 +336,7 @@ class ToolRegistry:
             SummaryTool,
             MetricQueryTool,
             AnalysisTool,
+            TraceCollectorTool,
         )
         from autoops_architect.tools.integrations import (
             AutoRCATool,
@@ -352,6 +353,7 @@ class ToolRegistry:
         registry.register(SummaryTool())
         registry.register(MetricQueryTool())
         registry.register(AnalysisTool())
+        registry.register(TraceCollectorTool())
 
         # Register integration tools (disabled by default until configured)
         registry.register(AutoRCATool(config=ToolConfig(enabled=False)))

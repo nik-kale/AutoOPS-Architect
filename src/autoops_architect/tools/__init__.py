@@ -7,6 +7,7 @@ from autoops_architect.tools.builtin import (
     SummaryTool,
     MetricQueryTool,
     AnalysisTool,
+    TraceCollectorTool,
 )
 from autoops_architect.tools.integrations import (
     AutoRCATool,
@@ -41,6 +42,7 @@ __all__ = [
     "SummaryTool",
     "MetricQueryTool",
     "AnalysisTool",
+    "TraceCollectorTool",
     # Integration tools
     "AutoRCATool",
     "MCPTool",

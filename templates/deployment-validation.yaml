@@ -1,0 +1,132 @@
+# Deployment Validation Template
+# Use this after a deployment to validate health and catch regressions
+
+id: deployment-validation
+name: Post-Deployment Validation
+description: Validate service health and detect regressions after a deployment
+category: deployment
+tags:
+  - deployment
+  - release
+  - validation
+  - canary
+  - regression
+  - rollout
+
+author: autoops-architect
+version: "1.0"
+
+parameters:
+  service: "{{service}}"
+  duration: "30m"
+  comparison_window: "1h"
+  error_threshold_percent: 1.0
+  latency_threshold_ms: 500
+
+nodes:
+  - id: query-current-errors
+    name: "Query current error rates"
+    description: "Get error rates since deployment"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_requests_total"
+      filters:
+        status_code: ">=500"
+      duration: "{{duration}}"
+
+  - id: query-baseline-errors
+    name: "Query baseline error rates"
+    description: "Get error rates from before deployment"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_requests_total"
+      filters:
+        status_code: ">=500"
+      offset: "{{comparison_window}}"
+      duration: "{{comparison_window}}"
+
+  - id: query-current-latency
+    name: "Query current latency"
+    description: "Get P99 latency since deployment"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_request_duration_seconds"
+      percentile: 0.99
+      duration: "{{duration}}"
+
+  - id: query-baseline-latency
+    name: "Query baseline latency"
+    description: "Get P99 latency from before deployment"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_request_duration_seconds"
+      percentile: 0.99
+      offset: "{{comparison_window}}"
+      duration: "{{comparison_window}}"
+
+  - id: check-pod-health
+    name: "Check pod health"
+    description: "Verify all pods are healthy and not restarting"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "kube_pod_status_ready"
+      additional_metrics:
+        - "kube_pod_container_status_restarts_total"
+
+  - id: collect-new-errors
+    name: "Collect new error patterns"
+    description: "Look for errors that didn't exist before deployment"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      level: "error"
+      duration: "{{duration}}"
+      exclude_known: true
+
+  - id: compare-metrics
+    name: "Compare before/after metrics"
+    description: "Statistical comparison of pre and post deployment metrics"
+    type: analysis
+    tool: analysis
+    params:
+      analysis_type: "regression_detection"
+      thresholds:
+        error_rate_increase_percent: "{{error_threshold_percent}}"
+        latency_p99_increase_ms: "{{latency_threshold_ms}}"
+
+  - id: generate-validation-report
+    name: "Generate validation report"
+    description: "Create deployment validation report with pass/fail status"
+    type: summary
+    tool: summary
+    params:
+      format: "deployment_report"
+      include_recommendations: true
+      include_rollback_guidance: true
+
+edges:
+  - from_node_id: query-current-errors
+    to_node_id: compare-metrics
+  - from_node_id: query-baseline-errors
+    to_node_id: compare-metrics
+  - from_node_id: query-current-latency
+    to_node_id: compare-metrics
+  - from_node_id: query-baseline-latency
+    to_node_id: compare-metrics
+  - from_node_id: check-pod-health
+    to_node_id: compare-metrics
+  - from_node_id: collect-new-errors
+    to_node_id: compare-metrics
+  - from_node_id: compare-metrics
+    to_node_id: generate-validation-report

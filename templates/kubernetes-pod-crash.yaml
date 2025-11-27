@@ -1,0 +1,101 @@
+# Kubernetes Pod Crash Investigation Template
+# Use this when pods are crash-looping or unexpectedly terminating
+
+id: k8s-pod-crash-investigation
+name: Kubernetes Pod Crash Investigation
+description: Investigate and diagnose Kubernetes pod crashes and restarts
+category: kubernetes
+tags:
+  - kubernetes
+  - k8s
+  - crash
+  - crashloop
+  - pod
+  - container
+  - restart
+  - OOMKilled
+
+author: autoops-architect
+version: "1.0"
+
+parameters:
+  service: "{{service}}"
+  namespace: "default"
+  duration: "1h"
+
+nodes:
+  - id: get-pod-events
+    name: "Get pod events for {{service}}"
+    description: "Retrieve Kubernetes events related to the pod"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      source: "kubernetes-events"
+      duration: "{{duration}}"
+
+  - id: collect-pod-logs
+    name: "Collect pod logs"
+    description: "Get container logs from current and previous instances"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      source: "kubernetes-logs"
+      include_previous: true
+      duration: "{{duration}}"
+
+  - id: check-resource-metrics
+    name: "Check resource usage metrics"
+    description: "Query CPU, memory, and resource limit metrics"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "container_memory_working_set_bytes"
+      additional_metrics:
+        - "container_cpu_usage_seconds_total"
+        - "kube_pod_container_status_restarts_total"
+
+  - id: check-liveness-probes
+    name: "Check liveness probe status"
+    description: "Analyze liveness and readiness probe failures"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "kube_pod_container_status_last_terminated_reason"
+
+  - id: analyze-crash-patterns
+    name: "Analyze crash patterns"
+    description: "Identify patterns in pod crashes and correlate with events"
+    type: analysis
+    tool: analysis
+    params:
+      analysis_type: "crash_pattern_analysis"
+      correlate_metrics: true
+
+  - id: generate-summary
+    name: "Generate crash investigation summary"
+    description: "Create a summary with root cause hypothesis and recommendations"
+    type: summary
+    tool: summary
+    params:
+      format: "markdown"
+      include_recommendations: true
+      sections:
+        - "crash_timeline"
+        - "resource_analysis"
+        - "recommendations"
+
+edges:
+  - from_node_id: get-pod-events
+    to_node_id: analyze-crash-patterns
+  - from_node_id: collect-pod-logs
+    to_node_id: analyze-crash-patterns
+  - from_node_id: check-resource-metrics
+    to_node_id: analyze-crash-patterns
+  - from_node_id: check-liveness-probes
+    to_node_id: analyze-crash-patterns
+  - from_node_id: analyze-crash-patterns
+    to_node_id: generate-summary

@@ -1,12 +1,64 @@
 """Template loader for loading templates from files and directories."""
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from autoops_architect.templates.registry import TemplateRegistry, WorkflowTemplate
+
+logger = logging.getLogger(__name__)
+
+
+def get_builtin_templates_dir() -> Path:
+    """
+    Get the directory containing built-in YAML templates.
+
+    Returns:
+        Path to the templates/ directory in the project root.
+    """
+    # Try to find relative to this file
+    module_dir = Path(__file__).parent.parent.parent.parent
+    templates_dir = module_dir / "templates"
+    if templates_dir.exists():
+        return templates_dir
+
+    # Try current working directory
+    cwd_templates = Path.cwd() / "templates"
+    if cwd_templates.exists():
+        return cwd_templates
+
+    # Return module dir path even if it doesn't exist yet
+    return templates_dir
+
+
+def get_project_templates_dir() -> Optional[Path]:
+    """
+    Get the project-level templates directory.
+
+    Looks for .autoops/templates/ in the current directory
+    or any parent directory (like .git discovery).
+
+    Returns:
+        Path to project templates or None if not found.
+    """
+    current = Path.cwd()
+
+    # Walk up the directory tree
+    for parent in [current] + list(current.parents):
+        project_dir = parent / ".autoops" / "templates"
+        if project_dir.exists():
+            return project_dir
+
+        # Stop at git root or filesystem root
+        if (parent / ".git").exists():
+            # Return the path even if templates dir doesn't exist
+            return parent / ".autoops" / "templates"
+
+    return None
 
 
 class TemplateLoader:
@@ -164,3 +216,179 @@ def get_user_templates_dir() -> Path:
     templates_dir = Path.home() / ".autoops" / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
     return templates_dir
+
+
+def discover_template_directories() -> list[Path]:
+    """
+    Discover all template directories in priority order.
+
+    Order (later sources override earlier):
+    1. Built-in templates (from package)
+    2. Project templates (.autoops/templates/)
+    3. User templates (~/.autoops/templates/)
+
+    Returns:
+        List of existing template directories.
+    """
+    directories = []
+
+    # Built-in templates
+    builtin_dir = get_builtin_templates_dir()
+    if builtin_dir.exists():
+        directories.append(builtin_dir)
+
+    # Project templates
+    project_dir = get_project_templates_dir()
+    if project_dir and project_dir.exists():
+        directories.append(project_dir)
+
+    # User templates
+    user_dir = get_user_templates_dir()
+    if user_dir.exists():
+        directories.append(user_dir)
+
+    return directories
+
+
+def load_all_file_templates() -> list[WorkflowTemplate]:
+    """
+    Load templates from all discovered directories.
+
+    Returns:
+        List of all loaded templates from files.
+    """
+    templates = []
+    seen_ids = set()
+
+    # Load in order, later templates override earlier ones
+    for directory in discover_template_directories():
+        dir_templates = TemplateLoader.load_from_directory(directory, recursive=True)
+        for template in dir_templates:
+            # Keep track of IDs - later directories win
+            if template.id in seen_ids:
+                # Remove the old one
+                templates = [t for t in templates if t.id != template.id]
+            seen_ids.add(template.id)
+            templates.append(template)
+
+    return templates
+
+
+def create_registry_with_file_templates(
+    include_builtin_code: bool = True,
+) -> TemplateRegistry:
+    """
+    Create a template registry with both code-defined and file-based templates.
+
+    This is the recommended way to get a registry with all available templates.
+
+    Args:
+        include_builtin_code: Whether to include code-defined built-in templates.
+
+    Returns:
+        A TemplateRegistry with all templates.
+    """
+    from autoops_architect.templates.registry import (
+        create_default_template_registry,
+        get_builtin_templates,
+    )
+
+    registry = TemplateRegistry()
+
+    # First add code-defined templates
+    if include_builtin_code:
+        for template in get_builtin_templates():
+            try:
+                registry.register(template)
+            except ValueError:
+                pass  # Skip duplicates
+
+    # Then add file-based templates (can override code-defined ones)
+    file_templates = load_all_file_templates()
+    for template in file_templates:
+        try:
+            registry.register(template)
+        except ValueError:
+            # Template ID already exists, this is a code-defined template
+            # We can't override in-place, so we just skip
+            logger.debug(f"Template {template.id} already registered from code")
+
+    return registry
+
+
+class TemplateDiscovery:
+    """
+    Utility class for discovering and managing templates across multiple sources.
+    """
+
+    def __init__(self) -> None:
+        """Initialize template discovery."""
+        self._cache: Optional[list[WorkflowTemplate]] = None
+
+    def get_template_sources(self) -> dict[str, Path]:
+        """
+        Get information about all template sources.
+
+        Returns:
+            Dict mapping source names to paths.
+        """
+        sources = {}
+
+        builtin_dir = get_builtin_templates_dir()
+        if builtin_dir.exists():
+            sources["builtin"] = builtin_dir
+
+        project_dir = get_project_templates_dir()
+        if project_dir and project_dir.exists():
+            sources["project"] = project_dir
+
+        user_dir = get_user_templates_dir()
+        if user_dir.exists():
+            sources["user"] = user_dir
+
+        return sources
+
+    def list_templates_by_source(self) -> dict[str, list[WorkflowTemplate]]:
+        """
+        List templates grouped by source.
+
+        Returns:
+            Dict mapping source names to template lists.
+        """
+        result = {}
+
+        for source_name, source_path in self.get_template_sources().items():
+            templates = TemplateLoader.load_from_directory(source_path, recursive=True)
+            result[source_name] = templates
+
+        return result
+
+    def find_template(
+        self,
+        template_id: str,
+    ) -> Optional[tuple[WorkflowTemplate, str]]:
+        """
+        Find a template by ID and return it with its source.
+
+        Args:
+            template_id: The template ID to find.
+
+        Returns:
+            Tuple of (template, source_name) or None.
+        """
+        # Search in reverse priority order (user, project, builtin)
+        for source_name, source_path in reversed(list(self.get_template_sources().items())):
+            templates = TemplateLoader.load_from_directory(source_path, recursive=True)
+            for template in templates:
+                if template.id == template_id:
+                    return (template, source_name)
+
+        return None
+
+    def refresh(self) -> None:
+        """Clear the template cache to force reload."""
+        self._cache = None
+
+
+# Global discovery instance for convenience
+_discovery = TemplateDiscovery()

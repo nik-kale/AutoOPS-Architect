@@ -274,6 +274,292 @@ class MetricQueryTool(Tool):
         }
 
 
+class TraceCollectorTool(Tool):
+    """
+    Trace collector tool for gathering distributed traces.
+
+    Collects distributed traces from tracing systems like Jaeger,
+    Zipkin, AWS X-Ray, or Datadog APM. Useful for understanding
+    request flow and identifying latency issues.
+
+    In production, this would integrate with actual tracing backends.
+    For now, it returns simulated trace data.
+    """
+
+    @property
+    def tool_id(self) -> str:
+        return "trace_collector"
+
+    @property
+    def description(self) -> str:
+        return "Collect distributed traces from services"
+
+    @property
+    def param_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "Service name to collect traces from"
+                },
+                "trace_id": {
+                    "type": "string",
+                    "description": "Specific trace ID to retrieve"
+                },
+                "duration": {
+                    "type": "string",
+                    "description": "Time duration (e.g., '1h', '30m', '24h')"
+                },
+                "operation": {
+                    "type": "string",
+                    "description": "Filter by operation name"
+                },
+                "min_duration_ms": {
+                    "type": "integer",
+                    "description": "Minimum span duration to include (ms)"
+                },
+                "error_only": {
+                    "type": "boolean",
+                    "description": "Only return traces with errors"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of traces to return"
+                },
+            },
+            "required": ["service"],
+        }
+
+    async def execute(
+        self,
+        params: dict[str, Any],
+        context: Optional[dict[str, Any]] = None,
+    ) -> ToolResult:
+        """Collect traces from the specified service."""
+        service = params.get("service", "unknown")
+        duration = params.get("duration", "1h")
+        operation = params.get("operation")
+        min_duration_ms = params.get("min_duration_ms", 0)
+        error_only = params.get("error_only", False)
+        limit = params.get("limit", 20)
+        trace_id = params.get("trace_id")
+
+        # If a specific trace ID is requested, return detailed trace
+        if trace_id:
+            trace = self._generate_detailed_trace(trace_id, service)
+            return ToolResult.success(
+                outputs={
+                    "trace_id": trace_id,
+                    "service": service,
+                    "trace": trace,
+                    "span_count": len(trace["spans"]),
+                    "total_duration_ms": trace["duration_ms"],
+                },
+                raw_output=self._format_trace(trace),
+            )
+
+        # Otherwise, return a list of traces
+        traces = self._generate_sample_traces(
+            service=service,
+            operation=operation,
+            min_duration_ms=min_duration_ms,
+            error_only=error_only,
+            limit=limit,
+        )
+
+        # Compute statistics
+        durations = [t["duration_ms"] for t in traces]
+        error_traces = [t for t in traces if t.get("error")]
+
+        return ToolResult.success(
+            outputs={
+                "service": service,
+                "duration": duration,
+                "trace_count": len(traces),
+                "error_trace_count": len(error_traces),
+                "avg_duration_ms": sum(durations) / len(durations) if durations else 0,
+                "max_duration_ms": max(durations) if durations else 0,
+                "min_duration_ms": min(durations) if durations else 0,
+                "p95_duration_ms": self._percentile(durations, 95),
+                "p99_duration_ms": self._percentile(durations, 99),
+                "traces": traces[:10],  # Return first 10 for display
+            },
+            raw_output=self._format_traces_summary(traces, error_traces),
+        )
+
+    def _generate_sample_traces(
+        self,
+        service: str,
+        operation: str | None,
+        min_duration_ms: int,
+        error_only: bool,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Generate sample trace data for testing."""
+        operations = [
+            "GET /api/v1/checkout",
+            "POST /api/v1/orders",
+            "GET /api/v1/products",
+            "POST /api/v1/payment",
+            "GET /api/v1/users/{id}",
+            "PUT /api/v1/cart",
+        ]
+
+        traces = []
+        base_time = datetime.utcnow()
+
+        for i in range(min(limit * 2, 100)):  # Generate more than limit to filter
+            op = operation if operation else random.choice(operations)
+            duration_ms = random.uniform(50, 2000)
+            has_error = random.random() < 0.1  # 10% error rate
+
+            if min_duration_ms and duration_ms < min_duration_ms:
+                continue
+            if error_only and not has_error:
+                continue
+
+            trace = {
+                "trace_id": f"trace-{random.randint(100000, 999999)}",
+                "start_time": (base_time - timedelta(minutes=i)).isoformat(),
+                "operation": op,
+                "duration_ms": round(duration_ms, 2),
+                "service": service,
+                "span_count": random.randint(3, 15),
+                "error": has_error,
+                "status_code": 500 if has_error else 200,
+                "tags": {
+                    "http.method": op.split()[0] if " " in op else "GET",
+                    "http.url": op.split()[1] if " " in op else op,
+                },
+            }
+
+            if has_error:
+                trace["error_message"] = random.choice([
+                    "Connection timeout to downstream service",
+                    "Database query failed",
+                    "Service unavailable",
+                    "Request validation failed",
+                    "Circuit breaker open",
+                ])
+
+            traces.append(trace)
+
+            if len(traces) >= limit:
+                break
+
+        return traces
+
+    def _generate_detailed_trace(
+        self,
+        trace_id: str,
+        service: str,
+    ) -> dict[str, Any]:
+        """Generate a detailed trace with spans."""
+        base_time = datetime.utcnow()
+        total_duration = random.uniform(200, 1500)
+
+        spans = []
+        current_offset = 0
+
+        span_templates = [
+            ("http.request", service, 0),
+            ("db.query", f"{service}-db", 0.1),
+            ("cache.get", f"{service}-cache", 0.05),
+            ("http.client", "payment-service", 0.3),
+            ("db.query", "payment-db", 0.1),
+            ("http.response", service, 0.05),
+        ]
+
+        for span_name, span_service, duration_fraction in span_templates:
+            span_duration = total_duration * duration_fraction
+            spans.append({
+                "span_id": f"span-{random.randint(10000, 99999)}",
+                "operation_name": span_name,
+                "service": span_service,
+                "start_offset_ms": round(current_offset, 2),
+                "duration_ms": round(span_duration, 2),
+                "tags": {},
+                "logs": [],
+            })
+            current_offset += span_duration * random.uniform(0.8, 1.2)
+
+        return {
+            "trace_id": trace_id,
+            "start_time": base_time.isoformat(),
+            "duration_ms": round(total_duration, 2),
+            "root_service": service,
+            "spans": spans,
+            "services_involved": list(set(s["service"] for s in spans)),
+        }
+
+    def _percentile(self, values: list[float], percentile: int) -> float:
+        """Calculate percentile of a list of values."""
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        idx = int(len(sorted_values) * percentile / 100)
+        return round(sorted_values[min(idx, len(sorted_values) - 1)], 2)
+
+    def _format_trace(self, trace: dict[str, Any]) -> str:
+        """Format a detailed trace for display."""
+        lines = [
+            f"Trace: {trace['trace_id']}",
+            "=" * 50,
+            f"Root Service: {trace['root_service']}",
+            f"Total Duration: {trace['duration_ms']}ms",
+            f"Services Involved: {', '.join(trace['services_involved'])}",
+            "",
+            "Spans:",
+        ]
+
+        for span in trace["spans"]:
+            lines.append(
+                f"  [{span['start_offset_ms']:>7.2f}ms] "
+                f"{span['service']:20s} {span['operation_name']:20s} "
+                f"({span['duration_ms']:.2f}ms)"
+            )
+
+        return "\n".join(lines)
+
+    def _format_traces_summary(
+        self,
+        traces: list[dict[str, Any]],
+        error_traces: list[dict[str, Any]],
+    ) -> str:
+        """Format trace summary for display."""
+        lines = [
+            "Trace Collection Summary",
+            "=" * 50,
+            f"Total Traces: {len(traces)}",
+            f"Error Traces: {len(error_traces)}",
+            "",
+        ]
+
+        if traces:
+            durations = [t["duration_ms"] for t in traces]
+            lines.extend([
+                f"Duration Stats:",
+                f"  Avg: {sum(durations)/len(durations):.2f}ms",
+                f"  Min: {min(durations):.2f}ms",
+                f"  Max: {max(durations):.2f}ms",
+                f"  P95: {self._percentile(durations, 95):.2f}ms",
+                f"  P99: {self._percentile(durations, 99):.2f}ms",
+            ])
+
+        if error_traces:
+            lines.extend([
+                "",
+                "Error Traces:",
+            ])
+            for trace in error_traces[:5]:
+                lines.append(
+                    f"  - {trace['trace_id']}: {trace.get('error_message', 'Unknown error')}"
+                )
+
+        return "\n".join(lines)
+
+
 class AnalysisTool(Tool):
     """
     Analysis tool for examining collected data.

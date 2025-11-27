@@ -492,19 +492,56 @@ app.add_typer(templates_app, name="templates")
 @templates_app.command("list")
 def templates_list(
     category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Filter by source (builtin/project/user)"),
+    show_source: bool = typer.Option(False, "--show-source", help="Show template source column"),
 ) -> None:
     """
     List available workflow templates.
 
+    Templates are loaded from multiple sources:
+    - builtin: Package-provided templates
+    - project: .autoops/templates/ in your project
+    - user: ~/.autoops/templates/
+
     Example:
         autoops templates list
         autoops templates list --category error_investigation
+        autoops templates list --source user --show-source
     """
-    planner = get_planner(mock=True)
-    templates = planner.list_templates()
+    from autoops_architect.templates.loader import (
+        TemplateDiscovery,
+        create_registry_with_file_templates,
+    )
+
+    discovery = TemplateDiscovery()
+
+    if source:
+        # Show templates from specific source only
+        templates_by_source = discovery.list_templates_by_source()
+        if source not in templates_by_source:
+            console.print(f"[red]Unknown source: {source}. Valid: builtin, project, user[/]")
+            raise typer.Exit(1)
+        templates = [
+            {"template": t, "source": source}
+            for t in templates_by_source.get(source, [])
+        ]
+    else:
+        # Get all templates with source info
+        templates = []
+        for source_name, source_templates in discovery.list_templates_by_source().items():
+            for t in source_templates:
+                templates.append({"template": t, "source": source_name})
+
+    # Also include code-defined built-in templates
+    from autoops_architect.templates.registry import get_builtin_templates
+    code_templates = get_builtin_templates()
+    code_ids = {t["template"].id for t in templates}
+    for t in code_templates:
+        if t.id not in code_ids:
+            templates.append({"template": t, "source": "builtin-code"})
 
     if category:
-        templates = [t for t in templates if t["category"] == category]
+        templates = [t for t in templates if t["template"].category == category]
 
     if not templates:
         console.print("[dim]No templates found.[/]")
@@ -516,32 +553,44 @@ def templates_list(
     table.add_column("ID")
     table.add_column("Name")
     table.add_column("Category")
+    if show_source:
+        table.add_column("Source")
     table.add_column("Description", max_width=40)
 
-    for t in templates:
-        table.add_row(
-            t["id"],
-            t["name"],
-            t["category"],
-            t["description"][:40] + "..." if len(t["description"]) > 40 else t["description"],
-        )
+    for item in templates:
+        t = item["template"]
+        desc = t.description[:40] + "..." if len(t.description) > 40 else t.description
+        row = [t.id, t.name, t.category]
+        if show_source:
+            row.append(item["source"])
+        row.append(desc)
+        table.add_row(*row)
 
     console.print(table)
+
+    # Show source info
+    sources = discovery.get_template_sources()
+    if sources:
+        console.print("\n[dim]Template sources:[/]")
+        for name, path in sources.items():
+            console.print(f"  {name}: {path}")
 
 
 @templates_app.command("show")
 def templates_show(
     template_id: str = typer.Argument(..., help="Template ID to show"),
+    show_yaml: bool = typer.Option(False, "--yaml", "-y", help="Show template YAML"),
 ) -> None:
     """
     Show details of a specific template.
 
     Example:
         autoops templates show error-rate-investigation
+        autoops templates show k8s-pod-crash-investigation --yaml
     """
-    from autoops_architect.templates.registry import create_default_template_registry
+    from autoops_architect.templates.loader import create_registry_with_file_templates
 
-    registry = create_default_template_registry()
+    registry = create_registry_with_file_templates()
     template = registry.get(template_id)
 
     if template is None:
@@ -553,16 +602,32 @@ def templates_show(
         f"{template.description}\n\n"
         f"[dim]Category:[/] {template.category}\n"
         f"[dim]Tags:[/] {', '.join(template.tags)}\n"
+        f"[dim]Version:[/] {template.version}\n"
+        f"[dim]Author:[/] {template.author or 'N/A'}\n"
         f"[dim]Nodes:[/] {len(template.nodes)}",
         title=f"Template: {template_id}",
     ))
 
-    # Show nodes
-    console.print("\n[bold]Workflow Steps:[/]")
-    tree = Tree("[bold]Nodes[/]")
-    for node in template.nodes:
-        tree.add(f"[{node.type.value}] {node.name}")
-    console.print(tree)
+    if show_yaml:
+        import yaml
+        template_data = template.model_dump(mode="json")
+        yaml_output = yaml.dump(template_data, default_flow_style=False, sort_keys=False)
+        console.print("\n[bold]Template YAML:[/]")
+        console.print(Syntax(yaml_output, "yaml"))
+    else:
+        # Show nodes
+        console.print("\n[bold]Workflow Steps:[/]")
+        tree = Tree("[bold]Nodes[/]")
+        for node in template.nodes:
+            tree.add(f"[{node.type.value}] {node.name}")
+        console.print(tree)
+
+        # Show edges
+        if template.edges:
+            console.print("\n[bold]Edges:[/]")
+            for edge in template.edges:
+                condition = f" [dim](when: {edge.condition})[/]" if edge.condition else ""
+                console.print(f"  {edge.from_node_id} -> {edge.to_node_id}{condition}")
 
 
 @templates_app.command("use")
@@ -579,10 +644,11 @@ def templates_use(
 
     Example:
         autoops templates use error-rate-investigation -g "Check checkout errors" -s checkout-api
+        autoops templates use k8s-pod-crash-investigation -g "Pod crashes" -s my-pod --run
     """
-    from autoops_architect.templates.registry import create_default_template_registry
+    from autoops_architect.templates.loader import create_registry_with_file_templates
 
-    registry = create_default_template_registry()
+    registry = create_registry_with_file_templates()
     template = registry.get(template_id)
 
     if template is None:
@@ -639,6 +705,195 @@ def templates_use(
         memory = get_memory_backend()
         entry_id = memory.save_workflow_run(goal_obj, workflow, result)
         console.print(f"[dim]Memory entry: {entry_id}[/]")
+
+
+@templates_app.command("init")
+def templates_init(
+    location: str = typer.Option("project", "--location", "-l", help="Where to create: project or user"),
+) -> None:
+    """
+    Initialize a templates directory.
+
+    Creates the templates directory structure for custom templates.
+
+    Example:
+        autoops templates init
+        autoops templates init --location user
+    """
+    from autoops_architect.templates.loader import (
+        get_project_templates_dir,
+        get_user_templates_dir,
+    )
+
+    if location == "user":
+        templates_dir = get_user_templates_dir()
+    else:
+        # Create .autoops/templates in current directory
+        templates_dir = Path.cwd() / ".autoops" / "templates"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[green]Templates directory created:[/] {templates_dir}")
+
+    # Create a sample template file
+    sample_template = templates_dir / "sample-investigation.yaml"
+    if not sample_template.exists():
+        sample_content = """# Sample Investigation Template
+# Customize this template for your team's needs
+
+id: sample-investigation
+name: Sample Investigation
+description: A sample template to customize
+category: general
+tags:
+  - sample
+  - template
+
+author: your-team
+version: "1.0"
+
+parameters:
+  service: "{{service}}"
+  duration: "1h"
+
+nodes:
+  - id: collect-logs
+    name: "Collect logs for {{service}}"
+    description: "Gather relevant logs"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      duration: "{{duration}}"
+
+  - id: analyze
+    name: "Analyze collected data"
+    description: "Analyze the gathered data"
+    type: analysis
+    tool: analysis
+    params:
+      analysis_type: "general"
+
+  - id: summary
+    name: "Generate summary"
+    description: "Create investigation summary"
+    type: summary
+    tool: summary
+    params:
+      format: "markdown"
+
+edges:
+  - from_node_id: collect-logs
+    to_node_id: analyze
+  - from_node_id: analyze
+    to_node_id: summary
+"""
+        sample_template.write_text(sample_content)
+        console.print(f"[green]Sample template created:[/] {sample_template}")
+
+    console.print("\n[dim]Add your custom YAML templates to this directory.[/]")
+
+
+@templates_app.command("export")
+def templates_export(
+    template_id: str = typer.Argument(..., help="Template ID to export"),
+    output: Path = typer.Option(..., "--output", "-o", help="Output file path"),
+    format: str = typer.Option("yaml", "--format", "-f", help="Output format: yaml or json"),
+) -> None:
+    """
+    Export a template to a file.
+
+    Export existing templates to customize or share.
+
+    Example:
+        autoops templates export error-rate-investigation -o my-template.yaml
+    """
+    from autoops_architect.templates.loader import (
+        TemplateLoader,
+        create_registry_with_file_templates,
+    )
+
+    registry = create_registry_with_file_templates()
+    template = registry.get(template_id)
+
+    if template is None:
+        console.print(f"[red]Template not found: {template_id}[/]")
+        raise typer.Exit(1)
+
+    TemplateLoader.save_template(template, output, format=format)
+    console.print(f"[green]Template exported to:[/] {output}")
+
+
+@templates_app.command("validate")
+def templates_validate(
+    template_file: Path = typer.Argument(..., help="Template file to validate"),
+) -> None:
+    """
+    Validate a template file.
+
+    Check that a YAML/JSON template file is valid.
+
+    Example:
+        autoops templates validate my-template.yaml
+    """
+    from autoops_architect.templates.loader import TemplateLoader
+
+    if not template_file.exists():
+        console.print(f"[red]File not found: {template_file}[/]")
+        raise typer.Exit(1)
+
+    try:
+        template = TemplateLoader.load_from_file(template_file)
+        console.print(f"[green]Valid template:[/] {template.name}")
+        console.print(f"  ID: {template.id}")
+        console.print(f"  Category: {template.category}")
+        console.print(f"  Nodes: {len(template.nodes)}")
+        console.print(f"  Edges: {len(template.edges)}")
+
+        # Basic validation
+        node_ids = {n.id for n in template.nodes}
+        issues = []
+
+        for edge in template.edges:
+            if edge.from_node_id not in node_ids:
+                issues.append(f"Edge references unknown node: {edge.from_node_id}")
+            if edge.to_node_id not in node_ids:
+                issues.append(f"Edge references unknown node: {edge.to_node_id}")
+
+        if issues:
+            console.print("\n[yellow]Warnings:[/]")
+            for issue in issues:
+                console.print(f"  - {issue}")
+        else:
+            console.print("\n[green]No issues found.[/]")
+
+    except Exception as e:
+        console.print(f"[red]Validation failed: {e}[/]")
+        raise typer.Exit(1)
+
+
+@templates_app.command("categories")
+def templates_categories() -> None:
+    """
+    List all template categories.
+
+    Example:
+        autoops templates categories
+    """
+    from autoops_architect.templates.loader import create_registry_with_file_templates
+
+    registry = create_registry_with_file_templates()
+    templates = registry.list()
+
+    categories = {}
+    for t in templates:
+        if t.category not in categories:
+            categories[t.category] = 0
+        categories[t.category] += 1
+
+    console.print("[bold]Template Categories:[/]\n")
+
+    for category, count in sorted(categories.items()):
+        console.print(f"  {category}: {count} template(s)")
 
 
 # Memory commands subgroup
@@ -757,22 +1012,33 @@ def memory_delete(
 def memory_search(
     query: str = typer.Argument(..., help="Search query"),
     limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    semantic: bool = typer.Option(False, "--semantic", "-s", help="Use semantic similarity search"),
 ) -> None:
     """
     Search memory entries.
 
+    Use --semantic for smarter natural language search that understands
+    similar concepts (e.g., "slow API" matches "latency issues").
+
     Example:
         autoops memory search "5xx errors checkout"
+        autoops memory search "slow database queries" --semantic
     """
     memory = get_memory_backend()
-    keywords = query.split()
-    entries = memory.search(keywords=keywords, limit=limit)
+
+    if semantic:
+        entries = memory.semantic_search(query=query, limit=limit)
+        search_type = "Semantic"
+    else:
+        keywords = query.split()
+        entries = memory.search(keywords=keywords, limit=limit)
+        search_type = "Keyword"
 
     if not entries:
         console.print(f"[dim]No results for: {query}[/]")
         return
 
-    console.print(f"[bold]Search results for:[/] {query}\n")
+    console.print(f"[bold]{search_type} search results for:[/] {query}\n")
 
     for entry in entries:
         status_color = "green" if entry.outcome_status == "success" else "red"

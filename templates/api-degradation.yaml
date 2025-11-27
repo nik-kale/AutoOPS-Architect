@@ -1,0 +1,126 @@
+# API Degradation Investigation Template
+# Use this when API response times or success rates are degraded
+
+id: api-degradation-investigation
+name: API Degradation Investigation
+description: Investigate API performance degradation, timeouts, and elevated error rates
+category: performance
+tags:
+  - api
+  - degradation
+  - timeout
+  - slowdown
+  - performance
+  - sla
+  - latency
+  - errors
+
+author: autoops-architect
+version: "1.0"
+
+parameters:
+  service: "{{service}}"
+  duration: "2h"
+  baseline_window: "7d"
+
+nodes:
+  - id: query-error-rates
+    name: "Query API error rates"
+    description: "Get 4xx and 5xx error rate trends"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_requests_total"
+      filters:
+        status_code: ">=400"
+      duration: "{{duration}}"
+
+  - id: query-latency-percentiles
+    name: "Query latency percentiles"
+    description: "Get P50, P95, P99 latency metrics"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "http_request_duration_seconds"
+      percentiles:
+        - 0.5
+        - 0.95
+        - 0.99
+      duration: "{{duration}}"
+
+  - id: collect-traces
+    name: "Collect distributed traces"
+    description: "Gather trace data for slow and failed requests"
+    type: trace_collection
+    tool: trace_collector
+    params:
+      service: "{{service}}"
+      duration: "{{duration}}"
+      sample_rate: 0.1
+      filters:
+        min_duration_ms: 1000
+
+  - id: check-dependencies
+    name: "Check dependency health"
+    description: "Query metrics for downstream services and databases"
+    type: metric_query
+    tool: metric_query
+    params:
+      service: "{{service}}"
+      metric_name: "dependency_request_duration_seconds"
+      include_downstream: true
+
+  - id: collect-error-logs
+    name: "Collect error logs"
+    description: "Gather application error logs"
+    type: log_collection
+    tool: log_collector
+    params:
+      service: "{{service}}"
+      level: "error"
+      duration: "{{duration}}"
+
+  - id: compare-baseline
+    name: "Compare with baseline"
+    description: "Compare current metrics with historical baseline"
+    type: analysis
+    tool: analysis
+    params:
+      analysis_type: "baseline_comparison"
+      baseline_window: "{{baseline_window}}"
+
+  - id: run-rca
+    name: "Run root cause analysis"
+    description: "Automated correlation and root cause analysis"
+    type: rca_call
+    tool: autoRCA
+    params:
+      include_dependencies: true
+
+  - id: generate-summary
+    name: "Generate degradation report"
+    description: "Create comprehensive report with findings and recommendations"
+    type: summary
+    tool: summary
+    params:
+      format: "detailed"
+      include_recommendations: true
+      include_charts: true
+
+edges:
+  - from_node_id: query-error-rates
+    to_node_id: compare-baseline
+  - from_node_id: query-latency-percentiles
+    to_node_id: compare-baseline
+  - from_node_id: collect-traces
+    to_node_id: run-rca
+  - from_node_id: check-dependencies
+    to_node_id: run-rca
+  - from_node_id: collect-error-logs
+    to_node_id: run-rca
+  - from_node_id: compare-baseline
+    to_node_id: run-rca
+  - from_node_id: run-rca
+    to_node_id: generate-summary

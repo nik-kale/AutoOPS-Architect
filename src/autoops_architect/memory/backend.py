@@ -1,6 +1,7 @@
 """Memory backend implementations for storing workflow history."""
 
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -13,6 +14,8 @@ from autoops_architect.models.execution import WorkflowRunResult
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry, PreferenceStore, UserPreference
 from autoops_architect.models.workflow import WorkflowGraph
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryBackend(ABC):
@@ -64,6 +67,32 @@ class MemoryBackend(ABC):
             List of matching memory entries.
         """
         pass
+
+    def semantic_search(
+        self,
+        query: str,
+        limit: int = 5,
+        min_score: float = 0.3,
+        use_hybrid: bool = True,
+    ) -> list[MemoryEntry]:
+        """
+        Search using semantic similarity.
+
+        This is an optional enhanced search that uses embeddings.
+        Default implementation falls back to keyword search.
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum number of results.
+            min_score: Minimum similarity score.
+            use_hybrid: Combine with keyword search.
+
+        Returns:
+            List of matching memory entries.
+        """
+        # Default implementation: extract keywords and use regular search
+        keywords = [w for w in query.lower().split() if len(w) > 2]
+        return self.search(keywords, limit=limit, min_score=min_score)
 
     @abstractmethod
     def get_entry(self, entry_id: str) -> Optional[MemoryEntry]:
@@ -253,6 +282,69 @@ class JSONMemoryBackend(MemoryBackend):
         # Sort by score descending
         results.sort(key=lambda x: x[0], reverse=True)
 
+        return [entry for _, entry in results[:limit]]
+
+    def semantic_search(
+        self,
+        query: str,
+        limit: int = 5,
+        min_score: float = 0.3,
+        use_hybrid: bool = True,
+    ) -> list[MemoryEntry]:
+        """
+        Search using semantic similarity with embeddings.
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum number of results.
+            min_score: Minimum similarity score.
+            use_hybrid: Combine semantic with keyword search.
+
+        Returns:
+            List of matching memory entries.
+        """
+        try:
+            from autoops_architect.memory.semantic import SemanticSearcher
+        except ImportError:
+            logger.debug("Semantic search not available, using keyword search")
+            keywords = [w for w in query.lower().split() if len(w) > 2]
+            return self.search(keywords, limit=limit, min_score=min_score)
+
+        searcher = SemanticSearcher()
+        results: list[tuple[float, MemoryEntry]] = []
+
+        for entry in self._entries.values():
+            if use_hybrid:
+                # Combine semantic and keyword similarity
+                query_keywords = [w for w in query.lower().split() if len(w) > 2]
+                score = searcher.hybrid_score(
+                    query=query,
+                    text=entry.goal_description,
+                    keywords=query_keywords,
+                    text_keywords=entry.keywords + entry.services,
+                    semantic_weight=0.6,
+                )
+            else:
+                # Pure semantic similarity
+                score = searcher.semantic_similarity(query, entry.goal_description)
+
+            # Boost successful outcomes
+            if entry.outcome_status == "success":
+                score *= 1.2
+
+            # Recency boost
+            days_old = (datetime.utcnow() - entry.created_at).days
+            if days_old < 7:
+                score *= 1.1
+            elif days_old > 30:
+                score *= 0.9
+
+            if score >= min_score:
+                entry_copy = entry.model_copy()
+                entry_copy.relevance_score = min(score, 1.0)
+                results.append((score, entry_copy))
+
+        results.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in results[:limit]]
 
     def get_entry(self, entry_id: str) -> Optional[MemoryEntry]:

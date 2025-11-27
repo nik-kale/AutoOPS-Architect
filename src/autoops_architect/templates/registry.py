@@ -164,9 +164,20 @@ class TemplateRegistry:
         """Get a template by ID."""
         return self._templates.get(template_id)
 
-    def list(self) -> list[WorkflowTemplate]:
-        """List all templates."""
-        return list(self._templates.values())
+    def list(self, category: Optional[str] = None) -> list[WorkflowTemplate]:
+        """
+        List all templates, optionally filtered by category.
+
+        Args:
+            category: Optional category to filter by.
+
+        Returns:
+            List of templates.
+        """
+        templates = list(self._templates.values())
+        if category:
+            templates = [t for t in templates if t.category == category]
+        return templates
 
     def search(
         self,
