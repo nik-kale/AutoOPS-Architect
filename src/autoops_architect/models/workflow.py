@@ -413,6 +413,97 @@ class WorkflowGraph(BaseModel):
 
         return "\n".join(lines)
 
+    def to_dot(self) -> str:
+        """
+        Generate a Graphviz DOT representation of the workflow.
+
+        Returns:
+            DOT graph code as a string.
+        """
+        lines = [
+            "digraph workflow {",
+            '    rankdir=TB;',
+            '    node [shape=box, style="rounded,filled", fontname="Arial"];',
+            '    edge [fontname="Arial"];',
+            "",
+        ]
+
+        # Define node colors based on type
+        type_colors = {
+            NodeType.LOG_COLLECTION: "#a8d5ff",
+            NodeType.METRIC_QUERY: "#a8d5ff",
+            NodeType.TRACE_COLLECTION: "#a8d5ff",
+            NodeType.RCA_CALL: "#ffd699",
+            NodeType.ANALYSIS: "#ffd699",
+            NodeType.SUMMARY: "#c5e8c5",
+            NodeType.TICKET_CREATE: "#d4a5d4",
+            NodeType.TICKET_UPDATE: "#d4a5d4",
+            NodeType.NOTIFICATION: "#d4a5d4",
+            NodeType.SERVICE_RESTART: "#ffb3b3",
+            NodeType.CONFIG_UPDATE: "#ffb3b3",
+            NodeType.ROLLBACK: "#ffb3b3",
+            NodeType.SCALE_ACTION: "#ffb3b3",
+            NodeType.HUMAN_REVIEW: "#ffffb3",
+            NodeType.DECISION: "#e0e0e0",
+        }
+
+        # Add nodes
+        for node in self.nodes:
+            safe_name = node.name.replace('"', '\\"')
+            color = type_colors.get(node.type, "#ffffff")
+
+            # Mark approval-required nodes with a different border
+            if node.requires_human_approval:
+                style = 'style="rounded,filled,bold", penwidth=2, color="#cc0000"'
+            else:
+                style = 'style="rounded,filled"'
+
+            lines.append(
+                f'    "{node.id}" [label="{safe_name}\\n[{node.type.value}]", '
+                f'fillcolor="{color}", {style}];'
+            )
+
+        lines.append("")
+
+        # Add edges
+        for edge in self.edges:
+            label = ""
+            if edge.condition:
+                safe_condition = edge.condition.replace('"', '\\"')
+                label = f' [label="{safe_condition}"]'
+            lines.append(f'    "{edge.from_node_id}" -> "{edge.to_node_id}"{label};')
+
+        lines.append("}")
+
+        return "\n".join(lines)
+
+    def to_svg(self) -> Optional[str]:
+        """
+        Generate an SVG representation using Graphviz.
+
+        Requires graphviz to be installed on the system.
+
+        Returns:
+            SVG string, or None if graphviz is not available.
+        """
+        try:
+            import subprocess
+
+            dot = self.to_dot()
+            result = subprocess.run(
+                ["dot", "-Tsvg"],
+                input=dot,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode == 0:
+                return result.stdout
+            return None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+
     model_config = {
         "json_schema_extra": {
             "examples": [

@@ -484,6 +484,374 @@ def validate(
         raise typer.Exit(1)
 
 
+# Template commands subgroup
+templates_app = typer.Typer(help="Manage workflow templates")
+app.add_typer(templates_app, name="templates")
+
+
+@templates_app.command("list")
+def templates_list(
+    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
+) -> None:
+    """
+    List available workflow templates.
+
+    Example:
+        autoops templates list
+        autoops templates list --category error_investigation
+    """
+    planner = get_planner(mock=True)
+    templates = planner.list_templates()
+
+    if category:
+        templates = [t for t in templates if t["category"] == category]
+
+    if not templates:
+        console.print("[dim]No templates found.[/]")
+        return
+
+    console.print("[bold]Available Templates:[/]\n")
+
+    table = Table(show_header=True)
+    table.add_column("ID")
+    table.add_column("Name")
+    table.add_column("Category")
+    table.add_column("Description", max_width=40)
+
+    for t in templates:
+        table.add_row(
+            t["id"],
+            t["name"],
+            t["category"],
+            t["description"][:40] + "..." if len(t["description"]) > 40 else t["description"],
+        )
+
+    console.print(table)
+
+
+@templates_app.command("show")
+def templates_show(
+    template_id: str = typer.Argument(..., help="Template ID to show"),
+) -> None:
+    """
+    Show details of a specific template.
+
+    Example:
+        autoops templates show error-rate-investigation
+    """
+    from autoops_architect.templates.registry import create_default_template_registry
+
+    registry = create_default_template_registry()
+    template = registry.get(template_id)
+
+    if template is None:
+        console.print(f"[red]Template not found: {template_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]{template.name}[/]\n\n"
+        f"{template.description}\n\n"
+        f"[dim]Category:[/] {template.category}\n"
+        f"[dim]Tags:[/] {', '.join(template.tags)}\n"
+        f"[dim]Nodes:[/] {len(template.nodes)}",
+        title=f"Template: {template_id}",
+    ))
+
+    # Show nodes
+    console.print("\n[bold]Workflow Steps:[/]")
+    tree = Tree("[bold]Nodes[/]")
+    for node in template.nodes:
+        tree.add(f"[{node.type.value}] {node.name}")
+    console.print(tree)
+
+
+@templates_app.command("use")
+def templates_use(
+    template_id: str = typer.Argument(..., help="Template ID to use"),
+    goal: str = typer.Option(..., "--goal", "-g", help="Goal description"),
+    service: Optional[str] = typer.Option(None, "--service", "-s", help="Target service"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
+    run_workflow: bool = typer.Option(False, "--run", "-r", help="Execute the workflow after creating"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run execution"),
+) -> None:
+    """
+    Create a workflow from a template.
+
+    Example:
+        autoops templates use error-rate-investigation -g "Check checkout errors" -s checkout-api
+    """
+    from autoops_architect.templates.registry import create_default_template_registry
+
+    registry = create_default_template_registry()
+    template = registry.get(template_id)
+
+    if template is None:
+        console.print(f"[red]Template not found: {template_id}[/]")
+        raise typer.Exit(1)
+
+    # Create goal
+    goal_obj = Goal(
+        description=goal,
+        services=[service] if service else [],
+    )
+
+    # Instantiate workflow
+    workflow = template.instantiate(
+        goal_description=goal,
+        service=service,
+    )
+
+    console.print(f"[green]Created workflow from template:[/] {template.name}")
+    console.print(f"[dim]ID: {workflow.id}[/]")
+    console.print(f"[dim]Nodes: {len(workflow.nodes)}[/]")
+
+    # Show steps
+    console.print("\n[bold]Workflow Steps:[/]")
+    for i, node in enumerate(workflow.topological_sort(), 1):
+        console.print(f"  {i}. {node.name}")
+
+    # Save to file if requested
+    if output:
+        output.write_text(workflow.model_dump_json(indent=2))
+        console.print(f"\n[green]Saved to:[/] {output}")
+
+    # Run if requested
+    if run_workflow:
+        console.print("\n[bold]Executing workflow...[/]")
+        executor = get_executor(dry_run=dry_run)
+
+        def on_status(node_id: str, status: ExecutionStatus, result=None):
+            icon = "✅" if status == ExecutionStatus.SUCCESS else (
+                "❌" if status == ExecutionStatus.FAILED else "⏳"
+            )
+            if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
+                console.print(f"  {icon} {node_id}")
+
+        executor.add_status_callback(on_status)
+        result = executor.execute_sync(workflow)
+
+        if result.overall_status == ExecutionStatus.SUCCESS:
+            console.print("\n[green bold]Workflow completed successfully![/]")
+        else:
+            console.print(f"\n[red bold]Workflow {result.overall_status.value}[/]")
+
+        # Save to memory
+        memory = get_memory_backend()
+        entry_id = memory.save_workflow_run(goal_obj, workflow, result)
+        console.print(f"[dim]Memory entry: {entry_id}[/]")
+
+
+# Memory commands subgroup
+memory_app = typer.Typer(help="Manage workflow memory")
+app.add_typer(memory_app, name="memory")
+
+
+@memory_app.command("list")
+def memory_list(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of entries to show"),
+) -> None:
+    """
+    List memory entries.
+
+    Example:
+        autoops memory list --limit 10
+    """
+    memory = get_memory_backend()
+    entries = memory.list_entries(limit=limit)
+
+    if not entries:
+        console.print("[dim]No memory entries found.[/]")
+        return
+
+    console.print(f"[bold]Memory Entries ({len(entries)}):[/]\n")
+
+    table = Table(show_header=True)
+    table.add_column("ID", style="dim")
+    table.add_column("Goal", max_width=35)
+    table.add_column("Status")
+    table.add_column("Nodes")
+    table.add_column("Date")
+
+    for entry in entries:
+        status_style = "green" if entry.outcome_status == "success" else "red"
+        table.add_row(
+            entry.id[:12],
+            entry.goal_description[:35] + ("..." if len(entry.goal_description) > 35 else ""),
+            f"[{status_style}]{entry.outcome_status}[/]",
+            f"{entry.success_count}/{entry.node_count}",
+            entry.created_at.strftime("%Y-%m-%d %H:%M"),
+        )
+
+    console.print(table)
+
+
+@memory_app.command("show")
+def memory_show(
+    entry_id: str = typer.Argument(..., help="Memory entry ID"),
+) -> None:
+    """
+    Show details of a memory entry.
+
+    Example:
+        autoops memory show mem-abc123
+    """
+    memory = get_memory_backend()
+
+    # Search for partial ID match
+    entries = memory.list_entries(limit=100)
+    entry = None
+    for e in entries:
+        if e.id.startswith(entry_id) or entry_id in e.id:
+            entry = e
+            break
+
+    if entry is None:
+        console.print(f"[red]Memory entry not found: {entry_id}[/]")
+        raise typer.Exit(1)
+
+    status_color = "green" if entry.outcome_status == "success" else "red"
+
+    console.print(Panel(
+        f"[bold]Goal:[/] {entry.goal_description}\n\n"
+        f"[bold]Status:[/] [{status_color}]{entry.outcome_status}[/]\n"
+        f"[bold]Workflow ID:[/] {entry.workflow_id}\n"
+        f"[bold]Services:[/] {', '.join(entry.services) if entry.services else 'N/A'}\n"
+        f"[bold]Nodes:[/] {entry.success_count} succeeded / {entry.node_count} total\n"
+        f"[bold]Duration:[/] {entry.duration_seconds:.2f}s" if entry.duration_seconds else ""
+        f"\n[bold]Created:[/] {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+        title=f"Memory Entry: {entry.id}",
+    ))
+
+    if entry.outcome_summary:
+        console.print(f"\n[bold]Summary:[/]\n{entry.outcome_summary}")
+
+
+@memory_app.command("delete")
+def memory_delete(
+    entry_id: str = typer.Argument(..., help="Memory entry ID to delete"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """
+    Delete a memory entry.
+
+    Example:
+        autoops memory delete mem-abc123
+    """
+    memory = get_memory_backend()
+
+    if not force:
+        confirm = typer.confirm(f"Delete memory entry {entry_id}?")
+        if not confirm:
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    deleted = memory.delete_entry(entry_id)
+
+    if deleted:
+        console.print(f"[green]Deleted memory entry: {entry_id}[/]")
+    else:
+        console.print(f"[red]Memory entry not found: {entry_id}[/]")
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+) -> None:
+    """
+    Search memory entries.
+
+    Example:
+        autoops memory search "5xx errors checkout"
+    """
+    memory = get_memory_backend()
+    keywords = query.split()
+    entries = memory.search(keywords=keywords, limit=limit)
+
+    if not entries:
+        console.print(f"[dim]No results for: {query}[/]")
+        return
+
+    console.print(f"[bold]Search results for:[/] {query}\n")
+
+    for entry in entries:
+        status_color = "green" if entry.outcome_status == "success" else "red"
+        console.print(f"[dim]{entry.id[:12]}[/] [{status_color}]{entry.outcome_status}[/]")
+        console.print(f"  {entry.goal_description[:60]}...")
+        console.print(f"  [dim]Relevance: {entry.relevance_score:.0%}[/]")
+        console.print()
+
+
+@memory_app.command("clear")
+def memory_clear(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """
+    Clear all memory entries.
+
+    Example:
+        autoops memory clear --force
+    """
+    if not force:
+        confirm = typer.confirm("Delete ALL memory entries? This cannot be undone.")
+        if not confirm:
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    memory = get_memory_backend()
+    entries = memory.list_entries(limit=1000)
+    count = 0
+
+    for entry in entries:
+        if memory.delete_entry(entry.id):
+            count += 1
+
+    console.print(f"[green]Deleted {count} memory entries.[/]")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload for development"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Start the web UI server.
+
+    This launches a FastAPI application that provides a web interface
+    for creating, reviewing, and executing workflows.
+
+    Example:
+        autoops serve
+        autoops serve --port 3000 --reload
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[red]Web dependencies not installed.[/]\n"
+            "Install with: pip install autoops-architect[web]"
+        )
+        raise typer.Exit(1)
+
+    console.print(Panel.fit(
+        f"[bold blue]Starting AutoOps Architect Web UI[/]\n\n"
+        f"Server: http://{host}:{port}\n"
+        f"API Docs: http://{host}:{port}/docs\n"
+        f"Debug: {'enabled' if debug else 'disabled'}",
+        title="AutoOps Architect",
+    ))
+
+    uvicorn.run(
+        "autoops_architect.api.app:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="debug" if debug else "info",
+    )
+
+
 @app.command()
 def version() -> None:
     """Show version information."""

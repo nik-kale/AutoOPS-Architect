@@ -341,6 +341,7 @@ class ToolRegistry:
             AutoRCATool,
             MCPTool,
             BrowserMissionTool,
+            DatadogTool,
         )
 
         registry = ToolRegistry()
@@ -352,10 +353,11 @@ class ToolRegistry:
         registry.register(MetricQueryTool())
         registry.register(AnalysisTool())
 
-        # Register integration tools (disabled by default)
+        # Register integration tools (disabled by default until configured)
         registry.register(AutoRCATool(config=ToolConfig(enabled=False)))
         registry.register(MCPTool(config=ToolConfig(enabled=False)))
         registry.register(BrowserMissionTool(config=ToolConfig(enabled=False)))
+        registry.register(DatadogTool(config=ToolConfig(enabled=False)))
 
         return registry
 

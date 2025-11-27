@@ -98,6 +98,7 @@ class Architect:
         config: Optional[PlannerConfig] = None,
         llm_client: Optional[LLMClient] = None,
         memory_backend: Optional[Any] = None,
+        template_registry: Optional[Any] = None,
     ) -> None:
         """
         Initialize the Architect.
@@ -106,10 +107,12 @@ class Architect:
             config: Planner configuration.
             llm_client: Optional pre-configured LLM client.
             memory_backend: Optional memory backend for retrieving past workflows.
+            template_registry: Optional template registry for template-based planning.
         """
         self.config = config or PlannerConfig()
         self._llm_client = llm_client
         self._memory_backend = memory_backend
+        self._template_registry = template_registry
 
     @property
     def llm_client(self) -> LLMClient:
@@ -389,3 +392,121 @@ but incorporate the requested changes. Respond with the complete updated workflo
                     )
 
         return issues
+
+    def plan_from_template(
+        self,
+        template_id: str,
+        goal: Goal,
+        **kwargs: Any,
+    ) -> WorkflowGraph:
+        """
+        Create a workflow from a template.
+
+        Args:
+            template_id: ID of the template to use.
+            goal: The Goal this workflow addresses.
+            **kwargs: Additional parameters to pass to the template.
+
+        Returns:
+            A WorkflowGraph instantiated from the template.
+
+        Raises:
+            ValueError: If the template is not found.
+        """
+        if self._template_registry is None:
+            from autoops_architect.templates.registry import create_default_template_registry
+            self._template_registry = create_default_template_registry()
+
+        template = self._template_registry.get(template_id)
+        if template is None:
+            raise ValueError(f"Template not found: {template_id}")
+
+        # Get service from goal if not provided
+        service = kwargs.pop("service", None)
+        if service is None and goal.services:
+            service = goal.services[0]
+
+        return template.instantiate(
+            goal_description=goal.description,
+            service=service,
+            **kwargs,
+        )
+
+    def list_templates(self) -> list[dict[str, Any]]:
+        """
+        List available templates.
+
+        Returns:
+            List of template info dictionaries.
+        """
+        if self._template_registry is None:
+            from autoops_architect.templates.registry import create_default_template_registry
+            self._template_registry = create_default_template_registry()
+
+        return [
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "category": t.category,
+                "tags": t.tags,
+            }
+            for t in self._template_registry.list()
+        ]
+
+    def find_matching_template(self, goal: Goal) -> Optional[str]:
+        """
+        Find a template that matches the given goal.
+
+        Uses keyword matching to find the best template.
+
+        Args:
+            goal: The Goal to match.
+
+        Returns:
+            Template ID if a match is found, None otherwise.
+        """
+        if self._template_registry is None:
+            from autoops_architect.templates.registry import create_default_template_registry
+            self._template_registry = create_default_template_registry()
+
+        keywords = goal.get_keywords()
+        goal_lower = goal.description.lower()
+
+        best_match = None
+        best_score = 0
+
+        for template in self._template_registry.list():
+            score = 0
+
+            # Check tag matches
+            for tag in template.tags:
+                if tag.lower() in keywords or tag.lower() in goal_lower:
+                    score += 2
+
+            # Check name/description matches
+            for keyword in keywords:
+                if keyword.lower() in template.name.lower():
+                    score += 1
+                if keyword.lower() in template.description.lower():
+                    score += 1
+
+            # Check for specific keywords
+            if "5xx" in goal_lower or "error" in goal_lower:
+                if "error" in template.category or "error" in str(template.tags):
+                    score += 3
+
+            if "latency" in goal_lower or "slow" in goal_lower:
+                if "performance" in template.category or "latency" in str(template.tags):
+                    score += 3
+
+            if "auth" in goal_lower or "login" in goal_lower:
+                if "security" in template.category or "auth" in str(template.tags):
+                    score += 3
+
+            if score > best_score:
+                best_score = score
+                best_match = template.id
+
+        # Only return if we have a reasonable match
+        return best_match if best_score >= 3 else None
