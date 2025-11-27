@@ -8,7 +8,7 @@ This package provides tools to:
 - Learn from past executions to improve future planning
 """
 
-__version__ = "0.4.0"
+__version__ = "1.0.0"
 
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.workflow import Edge, Node, WorkflowGraph
