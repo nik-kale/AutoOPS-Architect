@@ -1,0 +1,93 @@
+{
+  "id": "wf-latency-investigation-001",
+  "name": "Latency Investigation Workflow",
+  "goal_description": "Investigate slow response times on the login API endpoint",
+  "version": "1.0",
+  "metadata": {
+    "template": "latency_investigation",
+    "author": "autoops-architect",
+    "tags": ["latency", "performance", "investigation"]
+  },
+  "nodes": [
+    {
+      "id": "query-latency-metrics",
+      "name": "Query latency metrics",
+      "description": "Get P50, P95, P99 latency metrics for the auth service",
+      "type": "metric_query",
+      "tool": "metric_query",
+      "params": {
+        "service": "auth-service",
+        "metric_name": "http_request_duration_seconds",
+        "duration": "6h"
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "collect-slow-request-logs",
+      "name": "Collect slow request logs",
+      "description": "Gather logs for requests that exceeded latency thresholds",
+      "type": "log_collection",
+      "tool": "log_collector",
+      "params": {
+        "service": "auth-service",
+        "duration": "6h",
+        "query": "duration > 1000ms"
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "check-db-metrics",
+      "name": "Check database metrics",
+      "description": "Query database connection pool and query performance metrics",
+      "type": "metric_query",
+      "tool": "metric_query",
+      "params": {
+        "service": "auth-db",
+        "metric_name": "db_pool_connections",
+        "duration": "6h"
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "analyze-patterns",
+      "name": "Analyze performance patterns",
+      "description": "Analyze collected data for performance bottlenecks",
+      "type": "analysis",
+      "tool": "log_analyzer",
+      "params": {
+        "analysis_type": "latency"
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "create-summary",
+      "name": "Generate performance summary",
+      "description": "Create a summary of performance findings",
+      "type": "summary",
+      "tool": "summary",
+      "params": {
+        "format": "detailed",
+        "include_recommendations": true
+      },
+      "requires_human_approval": false
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": "query-latency-metrics",
+      "to_node_id": "analyze-patterns"
+    },
+    {
+      "from_node_id": "collect-slow-request-logs",
+      "to_node_id": "analyze-patterns"
+    },
+    {
+      "from_node_id": "check-db-metrics",
+      "to_node_id": "analyze-patterns"
+    },
+    {
+      "from_node_id": "analyze-patterns",
+      "to_node_id": "create-summary"
+    }
+  ]
+}

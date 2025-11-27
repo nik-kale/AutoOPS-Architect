@@ -1,0 +1,113 @@
+{
+  "id": "wf-5xx-investigation-001",
+  "name": "Investigate 5xx Errors Workflow",
+  "goal_description": "Investigate elevated 5xx errors for the checkout service in production",
+  "version": "1.0",
+  "metadata": {
+    "template": "error_investigation",
+    "author": "autoops-architect",
+    "tags": ["5xx", "errors", "investigation"]
+  },
+  "nodes": [
+    {
+      "id": "collect-logs",
+      "name": "Collect service logs",
+      "description": "Retrieve error logs from the checkout-api service for the last 2 hours",
+      "type": "log_collection",
+      "tool": "log_collector",
+      "params": {
+        "service": "checkout-api",
+        "duration": "2h",
+        "level": "error"
+      },
+      "requires_human_approval": false,
+      "timeout_seconds": 60
+    },
+    {
+      "id": "query-metrics",
+      "name": "Query error rate metrics",
+      "description": "Get error rate and latency metrics from monitoring",
+      "type": "metric_query",
+      "tool": "metric_query",
+      "params": {
+        "service": "checkout-api",
+        "metric_name": "http_requests_total",
+        "duration": "2h"
+      },
+      "requires_human_approval": false,
+      "timeout_seconds": 30
+    },
+    {
+      "id": "analyze-data",
+      "name": "Analyze collected data",
+      "description": "Analyze logs and metrics to identify patterns",
+      "type": "analysis",
+      "tool": "log_analyzer",
+      "params": {
+        "analysis_type": "error_patterns"
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "run-rca",
+      "name": "Run root cause analysis",
+      "description": "Execute AutoRCA to identify potential root causes",
+      "type": "rca_call",
+      "tool": "autoRCA",
+      "params": {},
+      "requires_human_approval": false
+    },
+    {
+      "id": "create-summary",
+      "name": "Generate investigation summary",
+      "description": "Create a comprehensive summary of findings and recommendations",
+      "type": "summary",
+      "tool": "summary",
+      "params": {
+        "format": "markdown",
+        "include_recommendations": true
+      },
+      "requires_human_approval": false
+    },
+    {
+      "id": "create-ticket",
+      "name": "Create tracking ticket",
+      "description": "Create a Jira ticket for tracking the investigation",
+      "type": "ticket_create",
+      "tool": "secureMCP:jira",
+      "params": {
+        "server": "jira",
+        "action": "create_issue",
+        "arguments": {
+          "project": "OPS",
+          "issue_type": "Incident",
+          "summary": "Elevated 5xx errors in checkout-api",
+          "priority": "High"
+        }
+      },
+      "requires_human_approval": false
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": "collect-logs",
+      "to_node_id": "analyze-data"
+    },
+    {
+      "from_node_id": "query-metrics",
+      "to_node_id": "analyze-data"
+    },
+    {
+      "from_node_id": "analyze-data",
+      "to_node_id": "run-rca"
+    },
+    {
+      "from_node_id": "run-rca",
+      "to_node_id": "create-summary"
+    },
+    {
+      "from_node_id": "create-summary",
+      "to_node_id": "create-ticket"
+    }
+  ]
+}
