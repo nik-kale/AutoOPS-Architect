@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # Main AutoOps Architect service
+  autoops:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: autoops-architect:latest
+    container_name: autoops-architect
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM Configuration
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      
+      # Logging
+      AUTOOPS_LOG_LEVEL: ${AUTOOPS_LOG_LEVEL:-INFO}
+      AUTOOPS_DEV_MODE: ${AUTOOPS_DEV_MODE:-false}
+      
+      # Optional integrations
+      AUTORCA_URL: ${AUTORCA_URL:-}
+      MCP_GATEWAY_URL: ${MCP_GATEWAY_URL:-}
+      OPS_AGENT_DESKTOP_URL: ${OPS_AGENT_DESKTOP_URL:-}
+      
+      # Redis (if using cache backend)
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Persist cache and data
+      - autoops-cache:/home/autoops/.cache/autoops-architect
+      # Mount local config (optional)
+      - ./config:/app/config:ro
+    depends_on:
+      - redis
+    networks:
+      - autoops-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: autoops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - autoops-net
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Optional: Prometheus for metrics (when metrics export is added)
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: autoops-prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus-data:/prometheus
+  #   networks:
+  #     - autoops-net
+  #   restart: unless-stopped
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+
+  # Optional: Grafana for dashboards
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: autoops-grafana
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #   networks:
+  #     - autoops-net
+  #   restart: unless-stopped
+  #   environment:
+  #     GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+
+networks:
+  autoops-net:
+    driver: bridge
+
+volumes:
+  autoops-cache:
+  redis-data:
+  # prometheus-data:
+  # grafana-data:
+

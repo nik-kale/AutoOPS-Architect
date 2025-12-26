@@ -22,6 +22,31 @@ AutoOps Architect takes your operations goals (like "investigate elevated 5xx er
 
 ### Installation
 
+#### Option 1: Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/nik-kale/AutoOPS-Architect.git
+cd AutoOPS-Architect
+
+# Set your API key
+export OPENAI_API_KEY="sk-..."
+# or
+export ANTHROPIC_API_KEY="sk-..."
+
+# Start with Docker Compose (includes Redis cache)
+docker-compose up -d
+
+# Access web UI at http://localhost:8000
+# View logs
+docker-compose logs -f autoops
+
+# Stop services
+docker-compose down
+```
+
+#### Option 2: Pip Install
+
 ```bash
 # Clone the repository
 git clone https://github.com/nik-kale/AutoOPS-Architect.git
@@ -32,6 +57,22 @@ pip install -e .
 
 # Or with development dependencies
 pip install -e ".[dev]"
+```
+
+#### Option 3: Docker Run (Standalone)
+
+```bash
+# Build image
+docker build -t autoops-architect .
+
+# Run container
+docker run -d \
+  -p 8000:8000 \
+  -e OPENAI_API_KEY="sk-..." \
+  --name autoops \
+  autoops-architect
+
+# Access at http://localhost:8000
 ```
 
 ### Basic Usage
