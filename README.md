@@ -2,7 +2,9 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
+[![CI](https://github.com/nik-kale/AutoOPS-Architect/actions/workflows/ci.yml/badge.svg)](https://github.com/nik-kale/AutoOPS-Architect/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nik-kale/AutoOPS-Architect/branch/main/graph/badge.svg)](https://codecov.io/gh/nik-kale/AutoOPS-Architect)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 **Zero/low-code meta-agent that designs and runs autonomous SRE & ops workflows from natural language goals.**
 
