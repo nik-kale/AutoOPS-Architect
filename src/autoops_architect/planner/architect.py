@@ -16,6 +16,7 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
+from autoops_architect.safety.sanitizer import sanitize_goal, PromptInjectionError
 
 
 class PlannerConfig(BaseModel):
@@ -71,6 +72,16 @@ class PlannerConfig(BaseModel):
         ge=0,
         le=10,
         description="Maximum number of similar workflows to include as context"
+    )
+
+    sanitization_mode: str = Field(
+        default="strict",
+        description="Input sanitization mode: strict, moderate, or permissive"
+    )
+
+    block_on_injection: bool = Field(
+        default=True,
+        description="Whether to block requests when prompt injection is detected"
     )
 
 
@@ -142,7 +153,23 @@ class Architect:
         Raises:
             ValueError: If the generated workflow is invalid.
             LLMError: If the LLM request fails.
+            PromptInjectionError: If prompt injection is detected in goal.
         """
+        # Sanitize goal description to prevent prompt injection
+        try:
+            sanitized_description = sanitize_goal(
+                goal.description,
+                mode=self.config.sanitization_mode,
+                raise_on_injection=self.config.block_on_injection,
+            )
+            # Update goal with sanitized description
+            goal.description = sanitized_description
+        except PromptInjectionError:
+            # Re-raise with additional context
+            raise
+        except ValueError as e:
+            raise ValueError(f"Goal validation failed: {e}")
+
         # Retrieve similar workflows from memory if enabled
         if similar_workflows is None and self.config.use_memory and self._memory_backend:
             keywords = goal.get_keywords()

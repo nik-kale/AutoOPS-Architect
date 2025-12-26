@@ -82,41 +82,106 @@ def sanitize_string(
     return value.strip()
 
 
-def sanitize_goal(goal: str) -> str:
+class PromptInjectionError(ValueError):
+    """Raised when prompt injection is detected and blocked."""
+    pass
+
+
+def sanitize_goal(
+    goal: str,
+    mode: str = "strict",
+    raise_on_injection: bool = True,
+) -> str:
     """
     Sanitize a goal description.
 
     Removes potentially dangerous content from user-provided goals
-    before passing to the LLM.
+    before passing to the LLM. Can detect and block prompt injection attempts.
 
     Args:
         goal: Raw goal description.
+        mode: Sanitization mode ('strict', 'moderate', 'permissive').
+        raise_on_injection: If True, raise exception on injection detection.
 
     Returns:
         Sanitized goal description.
+
+    Raises:
+        PromptInjectionError: If injection detected and raise_on_injection=True.
     """
+    original_goal = goal
+    
     # Basic sanitization
     goal = sanitize_string(goal, max_length=MAX_GOAL_LENGTH, allow_newlines=True)
 
-    # Remove potential prompt injection markers
-    prompt_injection_patterns = [
-        r'ignore previous instructions',
-        r'ignore above instructions',
-        r'disregard previous',
-        r'new instructions:',
-        r'system:\s*',
-        r'assistant:\s*',
-        r'user:\s*',
-        r'\[INST\]',
+    # Prompt injection patterns - organized by severity
+    critical_patterns = [
+        r'ignore\s+(previous|above|all)\s+(instructions|directives)',
+        r'disregard\s+(previous|above|all)',
+        r'(forget|override)\s+(everything|all|instructions)',
+        r'new\s+(instructions|directives|system\s+prompt)',
+        r'you\s+are\s+now\s+a',  # Role override attempts
+        r'pretend\s+you\s+are',
+        r'act\s+as\s+if',
+    ]
+    
+    moderate_patterns = [
+        r'system:\s*(?!$)',  # System role injection (not empty)
+        r'assistant:\s*(?!$)',  # Assistant role injection
+        r'user:\s*(?!$)',  # User role injection
+        r'\[INST\]',  # Llama instruction tokens
         r'\[/INST\]',
-        r'<\|im_start\|>',
+        r'<\|im_start\|>',  # ChatML tokens
         r'<\|im_end\|>',
+        r'```\s*(python|bash|sh|javascript)',  # Code block injection
+        r'<\|.*?\|>',  # Generic special tokens
+    ]
+    
+    permissive_patterns = [
+        r'disregard\s+this',
+        r'ignore\s+this',
     ]
 
-    for pattern in prompt_injection_patterns:
-        goal = re.sub(pattern, '', goal, flags=re.IGNORECASE)
+    # Check based on mode
+    patterns_to_check = []
+    if mode == "strict":
+        patterns_to_check = critical_patterns + moderate_patterns + permissive_patterns
+    elif mode == "moderate":
+        patterns_to_check = critical_patterns + moderate_patterns
+    elif mode == "permissive":
+        patterns_to_check = critical_patterns
+    else:
+        raise ValueError(f"Invalid sanitization mode: {mode}")
 
-    return goal.strip()
+    # Detect injections
+    detected_patterns = []
+    for pattern in patterns_to_check:
+        if re.search(pattern, goal, flags=re.IGNORECASE):
+            detected_patterns.append(pattern)
+            if raise_on_injection:
+                raise PromptInjectionError(
+                    f"Potential prompt injection detected in goal. "
+                    f"Pattern: {pattern}. Original: {original_goal[:100]}"
+                )
+
+    # If not raising, sanitize by removal
+    for pattern in patterns_to_check:
+        goal = re.sub(pattern, '[REMOVED]', goal, flags=re.IGNORECASE)
+
+    # Additional safety: remove excessive special characters
+    if mode == "strict":
+        # Limit consecutive special characters
+        goal = re.sub(r'[^\w\s]{5,}', '...', goal)
+        # Remove unusual Unicode ranges that might confuse models
+        goal = ''.join(c for c in goal if ord(c) < 0x2000 or ord(c) > 0x2BFF)
+
+    result = goal.strip()
+    
+    # Ensure we still have meaningful content
+    if len(result) < 10:
+        raise ValueError("Goal description too short after sanitization (minimum 10 characters)")
+    
+    return result
 
 
 def sanitize_params(
