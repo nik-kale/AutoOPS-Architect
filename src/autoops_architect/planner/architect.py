@@ -208,6 +208,9 @@ class Architect:
         """
         Synchronous version of plan().
 
+        Uses asyncio.run() to execute the async method in a new event loop.
+        Compatible with Python 3.11+ and nested async contexts.
+
         Args:
             goal: The Goal to plan for.
             constraints: Optional additional constraints.
@@ -219,12 +222,18 @@ class Architect:
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # If we reach here, we're in an async context - this is an error
+            raise RuntimeError(
+                "plan_sync() cannot be called from an async context. "
+                "Use await plan() instead."
+            )
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop - safe to use asyncio.run()
+            pass
 
-        return loop.run_until_complete(
+        return asyncio.run(
             self.plan(goal, constraints=constraints, similar_workflows=similar_workflows)
         )
 

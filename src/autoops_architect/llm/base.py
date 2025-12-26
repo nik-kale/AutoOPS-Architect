@@ -182,17 +182,24 @@ class LLMClient(ABC):
         """
         Synchronous wrapper for complete().
 
-        Uses asyncio to run the async method.
+        Uses asyncio.run() to execute the async method in a new event loop.
+        Compatible with Python 3.11+ and nested async contexts.
         """
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # If we reach here, we're in an async context - this is an error
+            raise RuntimeError(
+                "sync_complete() cannot be called from an async context. "
+                "Use await complete() instead."
+            )
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop - safe to use asyncio.run()
+            pass
 
-        return loop.run_until_complete(self.complete(messages, **kwargs))
+        return asyncio.run(self.complete(messages, **kwargs))
 
     def sync_complete_json(
         self,
@@ -203,19 +210,24 @@ class LLMClient(ABC):
         """
         Synchronous wrapper for complete_json().
 
-        Uses asyncio to run the async method.
+        Uses asyncio.run() to execute the async method in a new event loop.
+        Compatible with Python 3.11+ and nested async contexts.
         """
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # If we reach here, we're in an async context - this is an error
+            raise RuntimeError(
+                "sync_complete_json() cannot be called from an async context. "
+                "Use await complete_json() instead."
+            )
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop - safe to use asyncio.run()
+            pass
 
-        return loop.run_until_complete(
-            self.complete_json(messages, schema=schema, **kwargs)
-        )
+        return asyncio.run(self.complete_json(messages, schema=schema, **kwargs))
 
 
 class LLMError(Exception):
