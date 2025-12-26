@@ -64,7 +64,7 @@ web = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
     "sse-starlette>=1.8.0",
-    "prometheus-client>=0.19.0",
+    "apscheduler>=3.10.0",
 ]
 all = [
     "autoops-architect[dev,openai,anthropic,web]",

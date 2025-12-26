@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import memory_router, templates_router, workflows_router
-from autoops_architect.api.routes.webhooks import router as webhooks_router
+from autoops_architect.api.routes.schedules import router as schedules_router
 
 # Package version
 __version__ = "0.1.0"
@@ -72,17 +72,7 @@ def create_app(
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
-    app.include_router(webhooks_router, prefix="/api/v1")
-
-    # Metrics endpoint
-    @app.get("/metrics", include_in_schema=False, tags=["system"])
-    async def metrics():
-        """Prometheus metrics endpoint."""
-        from autoops_architect.metrics import get_metrics
-        from fastapi.responses import Response
-        
-        metrics_content, content_type = get_metrics()
-        return Response(content=metrics_content, media_type=content_type)
+    app.include_router(schedules_router, prefix="/api/v1")
 
     # Health check endpoint
     @app.get("/health", response_model=HealthResponse, tags=["system"])
