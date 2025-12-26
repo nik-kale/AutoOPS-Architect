@@ -22,7 +22,7 @@ jobs:
       - name: Check PR title format
         run: |
           PR_TITLE="${{ github.event.pull_request.title }}"
-          
+
           # Check if title follows conventional commits format
           if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|docs|refactor|perf|security|test|chore|style|ci|build)(\(.+\))?: .+'; then
             echo "❌ PR title must follow conventional commits format:"
@@ -34,26 +34,26 @@ jobs:
             echo "Current title: $PR_TITLE"
             exit 1
           fi
-          
+
           echo "✅ PR title follows conventional commits format"
 
       - name: Check PR description
         run: |
           DESCRIPTION="${{ github.event.pull_request.body }}"
-          
+
           if [ -z "$DESCRIPTION" ] || [ ${#DESCRIPTION} -lt 50 ]; then
             echo "❌ PR description is too short (minimum 50 characters)"
             echo "   Please provide a meaningful description of your changes"
             exit 1
           fi
-          
+
           echo "✅ PR description is adequate"
 
       - name: Check for breaking changes
         run: |
           PR_BODY="${{ github.event.pull_request.body }}"
           PR_TITLE="${{ github.event.pull_request.title }}"
-          
+
           # Check if breaking change is indicated
           if echo "$PR_TITLE" | grep -qE '!:' || echo "$PR_BODY" | grep -qiE 'breaking change'; then
             echo "⚠️  This PR contains breaking changes"
@@ -92,7 +92,7 @@ jobs:
       - name: Check for sensitive files
         run: |
           SENSITIVE_PATTERNS="*.pem *.key *.env .env.* *.p12 *.pfx id_rsa id_dsa"
-          
+
           for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
             for pattern in $SENSITIVE_PATTERNS; do
               if echo "$file" | grep -q "$pattern"; then
@@ -130,13 +130,13 @@ jobs:
         run: |
           COVERAGE=$(python -c "import json; data=json.load(open('coverage.json')); print(data['totals']['percent_covered'])")
           echo "Coverage: $COVERAGE%"
-          
+
           THRESHOLD=70
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "❌ Coverage $COVERAGE% is below threshold $THRESHOLD%"
             exit 1
           fi
-          
+
           echo "✅ Coverage $COVERAGE% meets threshold $THRESHOLD%"
 
       - name: Comment coverage on PR

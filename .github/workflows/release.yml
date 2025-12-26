@@ -118,7 +118,7 @@ jobs:
         run: |
           # Get the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
+
           if [ -z "$PREV_TAG" ]; then
             # First release - get all commits
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
@@ -126,7 +126,7 @@ jobs:
             # Get commits since previous tag
             CHANGELOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
           fi
-          
+
           # Save to file to preserve multiline
           echo "$CHANGELOG" > changelog.txt
 

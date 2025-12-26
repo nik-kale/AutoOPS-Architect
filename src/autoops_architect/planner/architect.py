@@ -8,10 +8,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
-from autoops_architect.llm.cache import CacheConfig
-from autoops_architect.llm.cached_client import CachedLLMClient
 from autoops_architect.llm.providers import get_llm_client
-from autoops_architect.logging import LogContext, get_logger
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
@@ -19,8 +16,7 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
-
-logger = get_logger(__name__)
+from autoops_architect.safety.sanitizer import sanitize_goal, PromptInjectionError
 
 
 class PlannerConfig(BaseModel):
@@ -29,11 +25,6 @@ class PlannerConfig(BaseModel):
     llm_config: Optional[LLMConfig] = Field(
         default=None,
         description="LLM configuration. If None, auto-detects from environment."
-    )
-
-    cache_config: Optional[CacheConfig] = Field(
-        default=None,
-        description="Cache configuration for LLM responses. Reduces costs and latency."
     )
 
     available_tools: list[str] = Field(
@@ -83,6 +74,16 @@ class PlannerConfig(BaseModel):
         description="Maximum number of similar workflows to include as context"
     )
 
+    sanitization_mode: str = Field(
+        default="strict",
+        description="Input sanitization mode: strict, moderate, or permissive"
+    )
+
+    block_on_injection: bool = Field(
+        default=True,
+        description="Whether to block requests when prompt injection is detected"
+    )
+
 
 class Architect:
     """
@@ -126,17 +127,9 @@ class Architect:
 
     @property
     def llm_client(self) -> LLMClient:
-        """Get or create the LLM client with optional caching."""
+        """Get or create the LLM client."""
         if self._llm_client is None:
-            # Get base LLM client
-            base_client = get_llm_client(self.config.llm_config)
-
-            # Wrap with caching if configured
-            if self.config.cache_config and self.config.cache_config.enabled:
-                self._llm_client = CachedLLMClient(base_client, self.config.cache_config)
-            else:
-                self._llm_client = base_client
-
+            self._llm_client = get_llm_client(self.config.llm_config)
         return self._llm_client
 
     async def plan(
@@ -160,14 +153,22 @@ class Architect:
         Raises:
             ValueError: If the generated workflow is invalid.
             LLMError: If the LLM request fails.
+            PromptInjectionError: If prompt injection is detected in goal.
         """
-        logger.info(
-            "workflow_planning_started",
-            goal=goal.description,
-            environment=goal.environment.value if goal.environment else None,
-            services=goal.services,
-            priority=goal.priority.value if goal.priority else None,
-        )
+        # Sanitize goal description to prevent prompt injection
+        try:
+            sanitized_description = sanitize_goal(
+                goal.description,
+                mode=self.config.sanitization_mode,
+                raise_on_injection=self.config.block_on_injection,
+            )
+            # Update goal with sanitized description
+            goal.description = sanitized_description
+        except PromptInjectionError:
+            # Re-raise with additional context
+            raise
+        except ValueError as e:
+            raise ValueError(f"Goal validation failed: {e}")
 
         # Retrieve similar workflows from memory if enabled
         if similar_workflows is None and self.config.use_memory and self._memory_backend:
@@ -175,10 +176,6 @@ class Architect:
             similar_workflows = self._memory_backend.search(
                 keywords=keywords,
                 limit=self.config.memory_limit,
-            )
-            logger.debug(
-                "similar_workflows_retrieved",
-                count=len(similar_workflows) if similar_workflows else 0,
             )
 
         # Build constraints list
@@ -207,30 +204,12 @@ class Architect:
             LLMMessage(role="user", content=user_prompt),
         ]
 
-        try:
-            workflow_data = await self.llm_client.complete_json(messages)
+        workflow_data = await self.llm_client.complete_json(messages)
 
-            # Parse and validate the workflow
-            workflow = self._parse_workflow(workflow_data, goal)
+        # Parse and validate the workflow
+        workflow = self._parse_workflow(workflow_data, goal)
 
-            logger.info(
-                "workflow_planning_completed",
-                workflow_id=workflow.id,
-                workflow_name=workflow.name,
-                node_count=len(workflow.nodes),
-                edge_count=len(workflow.edges),
-            )
-
-            return workflow
-
-        except Exception as e:
-            logger.error(
-                "workflow_planning_failed",
-                error=str(e),
-                error_type=type(e).__name__,
-                goal=goal.description,
-            )
-            raise
+        return workflow
 
     def plan_sync(
         self,
@@ -240,9 +219,6 @@ class Architect:
     ) -> WorkflowGraph:
         """
         Synchronous version of plan().
-
-        Uses asyncio.run() to execute the async method in a new event loop.
-        Compatible with Python 3.11+ and nested async contexts.
 
         Args:
             goal: The Goal to plan for.
@@ -255,18 +231,12 @@ class Architect:
         import asyncio
 
         try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            # If we reach here, we're in an async context - this is an error
-            raise RuntimeError(
-                "plan_sync() cannot be called from an async context. "
-                "Use await plan() instead."
-            )
+            loop = asyncio.get_event_loop()
         except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            pass
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        return asyncio.run(
+        return loop.run_until_complete(
             self.plan(goal, constraints=constraints, similar_workflows=similar_workflows)
         )
 
