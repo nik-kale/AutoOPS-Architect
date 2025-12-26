@@ -1,11 +1,12 @@
 """Workflow-related API routes."""
 
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from autoops_architect.api.models import (
@@ -27,6 +28,21 @@ from autoops_architect.planner.architect import Architect, PlannerConfig
 from autoops_architect.tools import get_default_tools
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+# Check if authentication is enabled
+AUTH_ENABLED = os.getenv("AUTOOPS_AUTH_ENABLED", "false").lower() == "true"
+
+# Optional authentication dependency
+def get_auth_dependency():
+    """Get authentication dependency if auth is enabled."""
+    if AUTH_ENABLED:
+        from autoops_architect.api.auth import require_permission
+        return require_permission("execute:workflows")
+    else:
+        # No auth required - return a dummy dependency that always succeeds
+        async def no_auth():
+            return None
+        return no_auth
 
 # In-memory storage for active workflows and executions
 # In production, this would be backed by a database
@@ -72,12 +88,17 @@ def _workflow_to_response(workflow: WorkflowGraph) -> WorkflowResponse:
 
 
 @router.post("", response_model=WorkflowResponse)
-async def create_workflow(request: GoalRequest) -> WorkflowResponse:
+async def create_workflow(
+    request: GoalRequest,
+    _auth: Any = Depends(get_auth_dependency()),
+) -> WorkflowResponse:
     """
     Generate a workflow from a natural language goal.
 
     This endpoint accepts a goal description and generates a workflow DAG
     that can be reviewed and modified before execution.
+
+    Requires: execute:workflows permission (if auth enabled)
     """
     # Build the Goal object
     environment = None
@@ -203,6 +224,7 @@ async def execute_workflow(
     workflow_id: str,
     dry_run: bool = Query(default=False),
     background_tasks: BackgroundTasks = BackgroundTasks(),
+    _auth: Any = Depends(get_auth_dependency()),
 ) -> ExecutionResponse:
     """
     Execute a workflow.

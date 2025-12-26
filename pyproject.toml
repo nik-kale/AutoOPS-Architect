@@ -64,6 +64,8 @@ web = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
     "sse-starlette>=1.8.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
 ]
 all = [
     "autoops-architect[dev,openai,anthropic,web]",
