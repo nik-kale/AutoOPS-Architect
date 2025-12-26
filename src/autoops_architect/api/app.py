@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import memory_router, templates_router, workflows_router
+from autoops_architect.api.routes.auth import router as auth_router
 
 # Package version
 __version__ = "0.1.0"
@@ -56,8 +57,15 @@ def create_app(
     )
 
     # Configure CORS
+    import os
+    auth_enabled = os.getenv("AUTOOPS_AUTH_ENABLED", "false").lower() == "true"
+    
     if cors_origins is None:
-        cors_origins = ["*"]
+        # If auth is enabled, use restrictive CORS by default
+        if auth_enabled:
+            cors_origins = os.getenv("AUTOOPS_CORS_ORIGINS", "http://localhost:3000").split(",")
+        else:
+            cors_origins = ["*"]
 
     app.add_middleware(
         CORSMiddleware,
@@ -68,6 +76,7 @@ def create_app(
     )
 
     # Include routers
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
