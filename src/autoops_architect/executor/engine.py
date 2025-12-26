@@ -698,6 +698,9 @@ class WorkflowExecutor:
         """
         Synchronous wrapper for execute().
 
+        Uses asyncio.run() to execute the async method in a new event loop.
+        Compatible with Python 3.11+ and nested async contexts.
+
         Args:
             workflow: The workflow to execute.
             initial_context: Optional initial context data.
@@ -706,14 +709,18 @@ class WorkflowExecutor:
             WorkflowRunResult with all node results.
         """
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # If we reach here, we're in an async context - this is an error
+            raise RuntimeError(
+                "execute_sync() cannot be called from an async context. "
+                "Use await execute() instead."
+            )
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop - safe to use asyncio.run()
+            pass
 
-        return loop.run_until_complete(
-            self.execute(workflow, initial_context=initial_context)
-        )
+        return asyncio.run(self.execute(workflow, initial_context=initial_context))
 
     async def execute_single_node(
         self,
