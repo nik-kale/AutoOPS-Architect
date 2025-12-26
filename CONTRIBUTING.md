@@ -237,6 +237,100 @@ pytest -v
 - **Integration tests**: Test component interactions
 - **End-to-end tests**: Test full workflows
 
+## Continuous Integration
+
+All pull requests automatically run through our CI/CD pipeline with GitHub Actions.
+
+### CI Pipeline Checks
+
+When you submit a PR, the following checks run automatically:
+
+#### 1. **Test Suite** (Required)
+- Tests run on Python 3.11 and 3.12
+- All tests must pass
+- Coverage report is generated and commented on the PR
+
+#### 2. **Linting & Formatting** (Required)
+```bash
+# Locally run the same checks:
+ruff check src/ tests/
+ruff format --check src/ tests/
+```
+
+#### 3. **Type Checking** (Required)
+```bash
+# Locally run type checking:
+mypy src/autoops_architect
+```
+
+#### 4. **Security Scanning**
+- Dependency vulnerability checks with `safety`
+- Security linting with `bandit`
+
+#### 5. **PR Metadata Checks**
+- PR title must follow [Conventional Commits](https://www.conventionalcommits.org/) format:
+  - `feat: add new feature`
+  - `fix: resolve bug`
+  - `docs: update documentation`
+  - `refactor: restructure code`
+  - `perf: improve performance`
+  - `test: add tests`
+  - `chore: maintenance tasks`
+- PR description must be at least 50 characters
+
+#### 6. **Code Coverage**
+- Minimum coverage threshold: 70%
+- Aim for 80%+ coverage
+- Coverage report is posted as a comment on your PR
+
+### Running CI Checks Locally
+
+Before pushing, run these commands to catch issues early:
+
+```bash
+# Run all tests with coverage
+pytest --cov=autoops_architect --cov-report=term
+
+# Lint code
+ruff check src/ tests/
+
+# Auto-fix linting issues
+ruff check --fix src/ tests/
+
+# Format code
+ruff format src/ tests/
+
+# Type check
+mypy src/autoops_architect
+
+# Security check
+pip install safety bandit
+safety check
+bandit -r src/autoops_architect
+```
+
+### Release Process
+
+Releases are automated via GitHub Actions:
+
+1. **Tag a release**:
+   ```bash
+   git tag -a v0.2.0 -m "Release version 0.2.0"
+   git push origin v0.2.0
+   ```
+
+2. **Automated steps**:
+   - Build package
+   - Run tests
+   - Publish to PyPI (with trusted publisher)
+   - Create GitHub Release with changelog
+
+3. **Version numbering** follows [Semantic Versioning](https://semver.org/):
+   - `MAJOR.MINOR.PATCH`
+   - `MAJOR`: Breaking changes
+   - `MINOR`: New features (backward compatible)
+   - `PATCH`: Bug fixes (backward compatible)
+
 ## Documentation
 
 ### Updating Documentation
