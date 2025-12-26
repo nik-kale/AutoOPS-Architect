@@ -72,6 +72,16 @@ def create_app(
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
 
+    # Metrics endpoint
+    @app.get("/metrics", include_in_schema=False, tags=["system"])
+    async def metrics():
+        """Prometheus metrics endpoint."""
+        from autoops_architect.metrics import get_metrics
+        from fastapi.responses import Response
+        
+        metrics_content, content_type = get_metrics()
+        return Response(content=metrics_content, media_type=content_type)
+
     # Health check endpoint
     @app.get("/health", response_model=HealthResponse, tags=["system"])
     async def health_check() -> HealthResponse:
