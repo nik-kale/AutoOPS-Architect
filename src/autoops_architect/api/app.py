@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import memory_router, templates_router, workflows_router
+from autoops_architect.api.routes.webhooks import router as webhooks_router
 
 # Package version
 __version__ = "0.1.0"
@@ -71,6 +72,7 @@ def create_app(
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
+    app.include_router(webhooks_router, prefix="/api/v1")
 
     # Health check endpoint
     @app.get("/health", response_model=HealthResponse, tags=["system"])
