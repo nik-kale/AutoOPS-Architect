@@ -8,6 +8,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
+from autoops_architect.llm.cache import CacheConfig
+from autoops_architect.llm.cached_client import CachedLLMClient
 from autoops_architect.llm.providers import get_llm_client
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry
@@ -24,6 +26,11 @@ class PlannerConfig(BaseModel):
     llm_config: Optional[LLMConfig] = Field(
         default=None,
         description="LLM configuration. If None, auto-detects from environment."
+    )
+
+    cache_config: Optional[CacheConfig] = Field(
+        default=None,
+        description="Cache configuration for LLM responses. Reduces costs and latency."
     )
 
     available_tools: list[str] = Field(
@@ -116,9 +123,17 @@ class Architect:
 
     @property
     def llm_client(self) -> LLMClient:
-        """Get or create the LLM client."""
+        """Get or create the LLM client with optional caching."""
         if self._llm_client is None:
-            self._llm_client = get_llm_client(self.config.llm_config)
+            # Get base LLM client
+            base_client = get_llm_client(self.config.llm_config)
+
+            # Wrap with caching if configured
+            if self.config.cache_config and self.config.cache_config.enabled:
+                self._llm_client = CachedLLMClient(base_client, self.config.cache_config)
+            else:
+                self._llm_client = base_client
+
         return self._llm_client
 
     async def plan(
