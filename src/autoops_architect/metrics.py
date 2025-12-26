@@ -113,7 +113,7 @@ active_executions = Gauge(
 def get_metrics() -> tuple[bytes, str]:
     """
     Get Prometheus metrics in text format.
-
+    
     Returns:
         Tuple of (metrics_content, content_type)
     """

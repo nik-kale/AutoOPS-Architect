@@ -42,7 +42,6 @@ dependencies = [
     "pyyaml>=6.0",
     "networkx>=3.0",
     "jinja2>=3.1.0",
-    "structlog>=24.1.0",
 ]
 
 [project.optional-dependencies]
@@ -65,8 +64,7 @@ web = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
     "sse-starlette>=1.8.0",
-    "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
+    "prometheus-client>=0.19.0",
 ]
 all = [
     "autoops-architect[dev,openai,anthropic,web]",
