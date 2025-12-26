@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
 from autoops_architect.llm.providers import get_llm_client
+from autoops_architect.logging import LogContext, get_logger
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
@@ -16,6 +17,8 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
+
+logger = get_logger(__name__)
 
 
 class PlannerConfig(BaseModel):
@@ -143,12 +146,24 @@ class Architect:
             ValueError: If the generated workflow is invalid.
             LLMError: If the LLM request fails.
         """
+        logger.info(
+            "workflow_planning_started",
+            goal=goal.description,
+            environment=goal.environment.value if goal.environment else None,
+            services=goal.services,
+            priority=goal.priority.value if goal.priority else None,
+        )
+
         # Retrieve similar workflows from memory if enabled
         if similar_workflows is None and self.config.use_memory and self._memory_backend:
             keywords = goal.get_keywords()
             similar_workflows = self._memory_backend.search(
                 keywords=keywords,
                 limit=self.config.memory_limit,
+            )
+            logger.debug(
+                "similar_workflows_retrieved",
+                count=len(similar_workflows) if similar_workflows else 0,
             )
 
         # Build constraints list
@@ -177,12 +192,30 @@ class Architect:
             LLMMessage(role="user", content=user_prompt),
         ]
 
-        workflow_data = await self.llm_client.complete_json(messages)
+        try:
+            workflow_data = await self.llm_client.complete_json(messages)
 
-        # Parse and validate the workflow
-        workflow = self._parse_workflow(workflow_data, goal)
+            # Parse and validate the workflow
+            workflow = self._parse_workflow(workflow_data, goal)
 
-        return workflow
+            logger.info(
+                "workflow_planning_completed",
+                workflow_id=workflow.id,
+                workflow_name=workflow.name,
+                node_count=len(workflow.nodes),
+                edge_count=len(workflow.edges),
+            )
+
+            return workflow
+
+        except Exception as e:
+            logger.error(
+                "workflow_planning_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                goal=goal.description,
+            )
+            raise
 
     def plan_sync(
         self,

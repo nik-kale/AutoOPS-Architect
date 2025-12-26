@@ -133,6 +133,10 @@ export OPENAI_API_KEY="sk-..."
 # or
 export ANTHROPIC_API_KEY="sk-..."
 
+# Logging configuration
+export AUTOOPS_LOG_LEVEL="INFO"      # DEBUG, INFO, WARNING, ERROR, CRITICAL
+export AUTOOPS_DEV_MODE="1"          # Enable colorful console logs (default: auto-detect TTY)
+
 # Optional integrations
 export AUTORCA_URL="http://localhost:8080"
 export MCP_GATEWAY_URL="http://localhost:3000"
@@ -168,6 +172,80 @@ config = PlannerConfig(
 
 architect = Architect(config=config)
 ```
+
+### Structured Logging
+
+AutoOps Architect uses structured JSON logging with automatic correlation IDs for debugging and observability in production.
+
+**Features:**
+- JSON-structured logs for easy parsing and aggregation
+- Automatic correlation IDs: `workflow_id`, `execution_id`, `node_id`
+- Sensitive data redaction (API keys, passwords, tokens)
+- Configurable log levels via environment variable
+- Development-friendly colored console output
+
+```python
+from autoops_architect.logging import get_logger, LogContext, configure_logging
+
+# Configure logging (usually done automatically)
+configure_logging(log_level="INFO", json_logs=True)
+
+# Get a logger
+logger = get_logger(__name__)
+
+# Log structured events
+logger.info(
+    "workflow_started",
+    workflow_id="wf-123",
+    node_count=5,
+    environment="production"
+)
+
+# Use LogContext for automatic correlation IDs
+with LogContext(workflow_id="wf-123", execution_id="exec-456"):
+    logger.info("processing_node", node_id="collect-logs")
+    # All logs within this context automatically include workflow_id and execution_id
+```
+
+**Example log output (JSON format):**
+
+```json
+{
+  "timestamp": "2025-12-26T10:30:00.123456Z",
+  "level": "info",
+  "event": "node_execution_started",
+  "workflow_id": "wf-abc123",
+  "execution_id": "exec-xyz789",
+  "node_id": "collect-logs",
+  "node_name": "Collect service logs",
+  "tool": "log_collector"
+}
+```
+
+**Example log output (dev mode):**
+
+```
+2025-12-26 10:30:00 [info     ] node_execution_started  workflow_id=wf-abc123 node_id=collect-logs tool=log_collector
+```
+
+**Querying logs with jq:**
+
+```bash
+# Filter logs for a specific workflow
+cat logs.json | jq 'select(.workflow_id == "wf-abc123")'
+
+# Get all node execution failures
+cat logs.json | jq 'select(.event == "node_execution_failed")'
+
+# Calculate average node execution time
+cat logs.json | jq -s '[.[] | select(.event == "node_execution_completed") | .duration_seconds] | add / length'
+```
+
+**Integration with log aggregation tools:**
+
+- **Datadog**: Logs are automatically parsed as JSON with correlation IDs as indexed fields
+- **ELK Stack**: Use the JSON codec in Filebeat/Logstash
+- **CloudWatch Logs**: Use JSON log format and CloudWatch Insights for querying
 
 ## CLI Reference
 
