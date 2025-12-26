@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.logging import LogContext, get_logger
 from autoops_architect.models.execution import (
     ExecutionStatus,
     NodeResult,
@@ -15,6 +16,8 @@ from autoops_architect.models.execution import (
 )
 from autoops_architect.models.workflow import Edge, Node, WorkflowGraph
 from autoops_architect.tools.base import Tool, ToolRegistry, ToolResult, ToolStatus
+
+logger = get_logger(__name__)
 
 
 class ConditionEvaluator:
@@ -300,6 +303,15 @@ class WorkflowExecutor:
             started_at=datetime.utcnow(),
         )
 
+        logger.info(
+            "workflow_execution_started",
+            workflow_id=workflow.id,
+            workflow_name=workflow.name,
+            node_count=len(workflow.nodes),
+            edge_count=len(workflow.edges),
+            dry_run=self.config.dry_run,
+        )
+
         # Initialize execution context
         self._execution_context = dict(initial_context) if initial_context else {}
 
@@ -312,6 +324,7 @@ class WorkflowExecutor:
         try:
             execution_order = workflow.topological_sort()
         except ValueError as e:
+            logger.error("workflow_topological_sort_failed", workflow_id=workflow.id, error=str(e))
             run_result.overall_status = ExecutionStatus.FAILED
             run_result.summary = f"Failed to sort workflow: {e}"
             run_result.finished_at = datetime.utcnow()
@@ -393,29 +406,57 @@ class WorkflowExecutor:
             self._notify_status(node.id, ExecutionStatus.RUNNING)
             node_result.mark_started()
 
-            try:
-                if self.config.dry_run:
-                    # Simulate execution
-                    await self._dry_run_node(node, node_result)
-                else:
-                    # Real execution
-                    await self._execute_node(node, node_result)
+            with LogContext(workflow_id=workflow.id, node_id=node.id):
+                logger.info(
+                    "node_execution_started",
+                    node_id=node.id,
+                    node_name=node.name,
+                    tool=node.tool,
+                    requires_approval=node.requires_human_approval,
+                )
 
-                completed_nodes.add(node.id)
+                try:
+                    if self.config.dry_run:
+                        # Simulate execution
+                        await self._dry_run_node(node, node_result)
+                    else:
+                        # Real execution
+                        await self._execute_node(node, node_result)
 
-                # Store outputs in context for downstream nodes
-                self._execution_context[node.id] = node_result.outputs
+                    completed_nodes.add(node.id)
 
-            except Exception as e:
-                node_result.mark_failed(str(e))
-                failed_nodes.add(node.id)
+                    # Store outputs in context for downstream nodes
+                    self._execution_context[node.id] = node_result.outputs
 
-                if self.config.stop_on_failure and not node.continue_on_failure:
-                    # Mark remaining nodes as skipped
-                    for remaining in execution_order:
-                        if remaining.id not in completed_nodes and remaining.id not in failed_nodes:
-                            node_results[remaining.id].mark_skipped("Execution stopped due to failure")
-                    break
+                    logger.info(
+                        "node_execution_completed",
+                        node_id=node.id,
+                        status=node_result.status.value,
+                        duration_seconds=node_result.duration_seconds,
+                    )
+
+                except Exception as e:
+                    node_result.mark_failed(str(e))
+                    failed_nodes.add(node.id)
+
+                    logger.error(
+                        "node_execution_failed",
+                        node_id=node.id,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+
+                    if self.config.stop_on_failure and not node.continue_on_failure:
+                        logger.warning(
+                            "workflow_execution_stopping",
+                            reason="node_failure",
+                            failed_node=node.id,
+                        )
+                        # Mark remaining nodes as skipped
+                        for remaining in execution_order:
+                            if remaining.id not in completed_nodes and remaining.id not in failed_nodes:
+                                node_results[remaining.id].mark_skipped("Execution stopped due to failure")
+                        break
 
             self._notify_status(node.id, node_result.status, node_result)
 
@@ -424,6 +465,17 @@ class WorkflowExecutor:
         run_result.finished_at = datetime.utcnow()
         run_result.overall_status = run_result.compute_overall_status()
         run_result.summary = run_result.generate_summary()
+
+        logger.info(
+            "workflow_execution_completed",
+            workflow_id=workflow.id,
+            overall_status=run_result.overall_status.value,
+            total_nodes=len(workflow.nodes),
+            completed_nodes=len(completed_nodes),
+            failed_nodes=len(failed_nodes),
+            skipped_nodes=len(skipped_by_condition),
+            duration_seconds=(run_result.finished_at - run_result.started_at).total_seconds(),
+        )
 
         return run_result
 
@@ -437,6 +489,7 @@ class WorkflowExecutor:
         tool = self.tool_registry.get(node.tool)
 
         if tool is None:
+            logger.error("tool_not_found", node_id=node.id, tool=node.tool)
             result.mark_failed(f"Tool not found: {node.tool}")
             return
 
