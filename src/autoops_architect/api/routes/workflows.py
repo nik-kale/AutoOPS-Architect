@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -27,6 +26,7 @@ from autoops_architect.models.execution import NodeResult
 from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import APPROVAL_REQUIRED_TYPES, WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
+from autoops_architect.timeutils import utcnow
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -246,7 +246,7 @@ async def execute_workflow(
     _active_executions[execution_id] = {
         "workflow_id": workflow_id,
         "status": ExecutionStatus.PENDING,
-        "started_at": datetime.utcnow(),
+        "started_at": utcnow(),
         "completed_at": None,
         "node_results": [],
         "events": [],
@@ -303,7 +303,7 @@ async def execute_workflow(
                 if result.overall_status == NodeExecutionStatus.SUCCESS
                 else ExecutionStatus.FAILED
             )
-            execution["completed_at"] = datetime.utcnow()
+            execution["completed_at"] = utcnow()
             execution["summary"] = result.summary
             execution["events"].append(
                 NodeExecutionEvent(
@@ -315,7 +315,7 @@ async def execute_workflow(
 
         except Exception as e:
             execution["status"] = ExecutionStatus.FAILED
-            execution["completed_at"] = datetime.utcnow()
+            execution["completed_at"] = utcnow()
             execution["events"].append(
                 NodeExecutionEvent(
                     event_type="workflow_failed",
@@ -330,7 +330,7 @@ async def execute_workflow(
         execution_id=execution_id,
         workflow_id=workflow_id,
         status=ExecutionStatus.PENDING,
-        started_at=datetime.utcnow(),
+        started_at=utcnow(),
         completed_at=None,
         node_results=[],
         summary=None,

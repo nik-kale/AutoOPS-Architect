@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
+from autoops_architect.timeutils import utcnow
+
 
 class ExecutionStatus(StrEnum):
     """Status of a node or workflow execution."""
@@ -88,26 +90,26 @@ class NodeResult(BaseModel):
     def mark_started(self) -> None:
         """Mark the node as started."""
         self.status = ExecutionStatus.RUNNING
-        self.started_at = datetime.utcnow()
+        self.started_at = utcnow()
 
     def mark_success(self, outputs: dict[str, Any] | None = None) -> None:
         """Mark the node as successfully completed."""
         self.status = ExecutionStatus.SUCCESS
-        self.finished_at = datetime.utcnow()
+        self.finished_at = utcnow()
         if outputs:
             self.outputs.update(outputs)
 
     def mark_failed(self, error_message: str, error_details: dict[str, Any] | None = None) -> None:
         """Mark the node as failed."""
         self.status = ExecutionStatus.FAILED
-        self.finished_at = datetime.utcnow()
+        self.finished_at = utcnow()
         self.error_message = error_message
         self.error_details = error_details
 
     def mark_skipped(self, reason: str = "Dependency failed") -> None:
         """Mark the node as skipped."""
         self.status = ExecutionStatus.SKIPPED
-        self.finished_at = datetime.utcnow()
+        self.finished_at = utcnow()
         self.outputs["skip_reason"] = reason
 
 

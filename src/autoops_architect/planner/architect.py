@@ -2,7 +2,6 @@
 
 import asyncio
 import uuid
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -24,6 +23,7 @@ from autoops_architect.safety.sanitizer import (
     sanitize_goal,
     sanitize_prompt_text,
 )
+from autoops_architect.timeutils import utcnow
 
 REMEDIATION_TYPES = {
     NodeType.SERVICE_RESTART,
@@ -370,7 +370,7 @@ class Architect:
             goal_description=data["goal_description"],
             nodes=nodes,
             edges=edges,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             version="1.0",
             metadata=data.get("metadata", {}),
         )

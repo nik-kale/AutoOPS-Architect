@@ -17,6 +17,7 @@ from autoops_architect.models.execution import WorkflowRunResult
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry, PreferenceStore, UserPreference
 from autoops_architect.models.workflow import WorkflowGraph
+from autoops_architect.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ class JSONMemoryBackend(MemoryBackend):
         """Save data to the JSON file."""
         data = {
             "version": "1.0",
-            "last_updated": datetime.utcnow().isoformat(),
+            "last_updated": utcnow().isoformat(),
             "entries": [entry.model_dump(mode="json") for entry in self._entries.values()],
             "preferences": [
                 pref.model_dump(mode="json") for pref in self._preferences.preferences.values()
@@ -286,7 +287,7 @@ class JSONMemoryBackend(MemoryBackend):
                 score *= 1.2
 
             # Slight recency boost
-            days_old = (datetime.utcnow() - entry.created_at).days
+            days_old = (utcnow() - entry.created_at).days
             if days_old < 7:
                 score *= 1.1
             elif days_old > 30:
@@ -351,7 +352,7 @@ class JSONMemoryBackend(MemoryBackend):
                 score *= 1.2
 
             # Recency boost
-            days_old = (datetime.utcnow() - entry.created_at).days
+            days_old = (utcnow() - entry.created_at).days
             if days_old < 7:
                 score *= 1.1
             elif days_old > 30:
@@ -522,7 +523,7 @@ class SQLiteMemoryBackend(MemoryBackend):
                     result.failed_count,
                     result.duration_seconds,
                     workflow.model_dump_json(),
-                    datetime.utcnow().isoformat(),
+                    utcnow().isoformat(),
                 ),
             )
             conn.commit()
@@ -632,7 +633,7 @@ class SQLiteMemoryBackend(MemoryBackend):
         description: str | None = None,
     ) -> None:
         """Set a user preference."""
-        now = datetime.utcnow().isoformat()
+        now = utcnow().isoformat()
         value_json = json.dumps(value)
 
         with self._get_connection() as conn:

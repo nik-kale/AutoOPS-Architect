@@ -5,7 +5,6 @@ import operator
 import re
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -18,6 +17,7 @@ from autoops_architect.models.execution import (
     WorkflowRunResult,
 )
 from autoops_architect.models.workflow import Node, WorkflowGraph
+from autoops_architect.timeutils import utcnow
 from autoops_architect.tools.base import ToolRegistry, ToolStatus
 
 logger = get_logger(__name__)
@@ -306,7 +306,7 @@ class WorkflowExecutor:
         run_result = WorkflowRunResult(
             workflow_id=workflow.id,
             goal_description=workflow.goal_description,
-            started_at=datetime.utcnow(),
+            started_at=utcnow(),
         )
 
         logger.info(
@@ -333,7 +333,7 @@ class WorkflowExecutor:
             logger.error("workflow_topological_sort_failed", workflow_id=workflow.id, error=str(e))
             run_result.overall_status = ExecutionStatus.FAILED
             run_result.summary = f"Failed to sort workflow: {e}"
-            run_result.finished_at = datetime.utcnow()
+            run_result.finished_at = utcnow()
             return run_result
 
         state = _RunState()
@@ -367,7 +367,7 @@ class WorkflowExecutor:
 
         # Finalize run result
         run_result.node_results = list(node_results.values())
-        run_result.finished_at = datetime.utcnow()
+        run_result.finished_at = utcnow()
         run_result.overall_status = run_result.compute_overall_status()
         run_result.summary = run_result.generate_summary()
 
@@ -582,7 +582,7 @@ class WorkflowExecutor:
         run_result = WorkflowRunResult(
             workflow_id=workflow.id,
             goal_description=workflow.goal_description,
-            started_at=datetime.utcnow(),
+            started_at=utcnow(),
         )
 
         # Initialize execution context
@@ -627,7 +627,7 @@ class WorkflowExecutor:
 
         # Finalize run result
         run_result.node_results = list(node_results.values())
-        run_result.finished_at = datetime.utcnow()
+        run_result.finished_at = utcnow()
         run_result.overall_status = run_result.compute_overall_status()
         run_result.summary = run_result.generate_summary()
 

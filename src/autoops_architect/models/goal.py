@@ -5,6 +5,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
+
 
 class Environment(StrEnum):
     """Target environment for the operations goal."""
@@ -71,7 +73,7 @@ class Goal(BaseModel):
     )
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Timestamp when the goal was created"
+        default_factory=utcnow, description="Timestamp when the goal was created"
     )
 
     requester: str | None = Field(

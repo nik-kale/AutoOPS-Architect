@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
+
 
 class MemoryEntry(BaseModel):
     """
@@ -56,9 +58,7 @@ class MemoryEntry(BaseModel):
         default=None, description="Total execution duration in seconds"
     )
 
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When this memory was created"
-    )
+    created_at: datetime = Field(default_factory=utcnow, description="When this memory was created")
 
     workflow_json: str | None = Field(default=None, description="Full workflow JSON for reference")
 
@@ -104,7 +104,7 @@ class WorkflowMemory(BaseModel):
     entries: list[MemoryEntry] = Field(default_factory=list, description="List of memory entries")
 
     last_updated: datetime = Field(
-        default_factory=datetime.utcnow, description="When this memory was last updated"
+        default_factory=utcnow, description="When this memory was last updated"
     )
 
     version: str = Field(default="1.0", description="Schema version")
@@ -112,7 +112,7 @@ class WorkflowMemory(BaseModel):
     def add_entry(self, entry: MemoryEntry) -> None:
         """Add a new memory entry."""
         self.entries.append(entry)
-        self.last_updated = datetime.utcnow()
+        self.last_updated = utcnow()
 
     def search(
         self, keywords: list[str], limit: int = 5, min_score: float = 0.1
@@ -179,12 +179,10 @@ class UserPreference(BaseModel):
 
     description: str | None = Field(default=None, description="Human-readable description")
 
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When this preference was set"
-    )
+    created_at: datetime = Field(default_factory=utcnow, description="When this preference was set")
 
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When this preference was last updated"
+        default_factory=utcnow, description="When this preference was last updated"
     )
 
 
@@ -200,7 +198,7 @@ class PreferenceStore(BaseModel):
         if key in self.preferences:
             pref = self.preferences[key]
             pref.value = value
-            pref.updated_at = datetime.utcnow()
+            pref.updated_at = utcnow()
             if description:
                 pref.description = description
         else:

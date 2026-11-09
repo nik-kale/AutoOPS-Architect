@@ -15,6 +15,7 @@ from jwt import InvalidTokenError as JWTError
 from pydantic import BaseModel, Field
 
 from autoops_architect.logging import get_logger
+from autoops_architect.timeutils import utcnow
 
 logger = get_logger(__name__)
 
@@ -154,9 +155,9 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     """Create a JWT access token."""
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -191,7 +192,7 @@ def validate_api_key(api_key: str) -> APIKey | None:
         return None
     if key_data.disabled:
         return None
-    if key_data.expires_at and key_data.expires_at < datetime.utcnow():
+    if key_data.expires_at and key_data.expires_at < utcnow():
         return None
     return key_data
 
@@ -330,13 +331,13 @@ def create_api_key(
     key = secrets.token_urlsafe(32)
     expires_at = None
     if expires_days:
-        expires_at = datetime.utcnow() + timedelta(days=expires_days)
+        expires_at = utcnow() + timedelta(days=expires_days)
 
     api_key_data = APIKey(
         key=key,
         name=name,
         roles=roles,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
         expires_at=expires_at,
         disabled=False,
     )

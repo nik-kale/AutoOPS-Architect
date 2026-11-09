@@ -9,6 +9,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
+
 
 class Schedule(BaseModel):
     """Scheduled workflow configuration."""
@@ -21,7 +23,7 @@ class Schedule(BaseModel):
     goal_description: str | None = Field(None, description="Goal description")
     parameters: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     last_run: datetime | None = None
     next_run: datetime | None = None
     run_count: int = Field(default=0)
@@ -35,7 +37,7 @@ class ScheduleExecution(BaseModel):
     schedule_id: str
     workflow_id: str | None = None
     status: str = "scheduled"  # scheduled, running, completed, failed
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=utcnow)
     completed_at: datetime | None = None
     error: str | None = None
 
@@ -203,7 +205,7 @@ def record_execution(
         schedule_id=schedule_id,
         workflow_id=workflow_id,
         status=status,
-        completed_at=datetime.utcnow() if status in ["completed", "failed"] else None,
+        completed_at=utcnow() if status in ["completed", "failed"] else None,
         error=error,
     )
 

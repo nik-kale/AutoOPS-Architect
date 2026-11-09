@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
+
 
 class GoalRequest(BaseModel):
     """Request to create a workflow from a goal."""
@@ -117,7 +119,7 @@ class NodeExecutionEvent(BaseModel):
     status: str
     message: str | None = None
     result: dict[str, Any] | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utcnow)
 
 
 class ExecutionRequest(BaseModel):

@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
+
 
 class WebhookSource(StrEnum):
     """Supported webhook sources."""
@@ -35,7 +37,7 @@ class WebhookConfig(BaseModel):
         None, description="Secret for signature verification", exclude=True, repr=False
     )
     enabled: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -51,7 +53,7 @@ class WebhookEvent(BaseModel):
     workflow_id: str | None = None
     status: str = "received"  # received, processing, completed, failed
     error: str | None = None
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=utcnow)
     processed_at: datetime | None = None
 
 

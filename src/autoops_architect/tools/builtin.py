@@ -1,9 +1,10 @@
 """Built-in tools for AutoOps Architect."""
 
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
+from autoops_architect.timeutils import utcnow
 from autoops_architect.tools.base import Tool, ToolConfig, ToolResult
 
 
@@ -44,7 +45,7 @@ class EchoTool(Tool):
             outputs={
                 "echoed_params": params,
                 "context_received": bool(context),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": utcnow().isoformat(),
             },
             raw_output=f"Echo: {message}",
         )
@@ -139,7 +140,7 @@ class LogCollectorTool(Tool):
         ]
 
         entries = []
-        base_time = datetime.utcnow()
+        base_time = utcnow()
 
         for i in range(50):
             level, msg = random.choice(messages)
@@ -242,7 +243,7 @@ class MetricQueryTool(Tool):
         timestamps = []
         values = []
 
-        base_time = datetime.utcnow()
+        base_time = utcnow()
 
         for i in range(60):  # 60 data points
             timestamps.append((base_time - timedelta(minutes=i)).isoformat())
@@ -379,7 +380,7 @@ class TraceCollectorTool(Tool):
         ]
 
         traces = []
-        base_time = datetime.utcnow()
+        base_time = utcnow()
 
         for i in range(min(limit * 2, 100)):  # Generate more than limit to filter
             op = operation if operation else random.choice(operations)
@@ -430,7 +431,7 @@ class TraceCollectorTool(Tool):
         service: str,
     ) -> dict[str, Any]:
         """Generate a detailed trace with spans."""
-        base_time = datetime.utcnow()
+        base_time = utcnow()
         total_duration = random.uniform(200, 1500)
 
         spans = []
@@ -810,7 +811,7 @@ class SummaryTool(Tool):
 
         if format_type == "markdown":
             lines.append("# Investigation Summary\n")
-            lines.append(f"*Generated: {datetime.utcnow().isoformat()}*\n")
+            lines.append(f"*Generated: {utcnow().isoformat()}*\n")
         else:
             lines.append("Investigation Summary")
             lines.append("=" * 40)

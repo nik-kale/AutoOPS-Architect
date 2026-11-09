@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
+from autoops_architect.timeutils import utcnow
 
 _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
@@ -64,7 +65,7 @@ class WorkflowTemplate(BaseModel):
     version: str = Field(default="1.0", description="Template version")
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When the template was created"
+        default_factory=utcnow, description="When the template was created"
     )
 
     def instantiate(
@@ -114,7 +115,7 @@ class WorkflowTemplate(BaseModel):
             metadata={
                 "template_id": self.id,
                 "template_version": self.version,
-                "instantiated_at": datetime.utcnow().isoformat(),
+                "instantiated_at": utcnow().isoformat(),
                 "parameters": params,
             },
         )

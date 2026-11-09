@@ -7,6 +7,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from autoops_architect.timeutils import utcnow
+
 
 class NodeType(StrEnum):
     """Types of nodes in a workflow graph."""
@@ -209,7 +211,7 @@ class WorkflowGraph(BaseModel):
     )
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Timestamp when the workflow was created"
+        default_factory=utcnow, description="Timestamp when the workflow was created"
     )
 
     version: str = Field(default="1.0", description="Schema version of this workflow")
