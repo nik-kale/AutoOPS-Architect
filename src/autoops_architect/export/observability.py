@@ -376,11 +376,11 @@ class MetricsExporter:
 
         # Histograms
         for key, values in self._histograms.items():
-            base_name = key.split("{")[0]
+            base_name, brace, labels = key.partition("{")
             lines.append(f"# TYPE {base_name} histogram")
             if values:
-                lines.append(f"{key}_count {len(values)}")
-                lines.append(f"{key}_sum {sum(values)}")
+                lines.append(f"{base_name}_count{brace}{labels} {len(values)}")
+                lines.append(f"{base_name}_sum{brace}{labels} {sum(values)}")
 
         # Gauges
         for key, gauge in self._gauges.items():
