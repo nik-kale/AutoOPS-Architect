@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from autoops_architect import scheduler
 from autoops_architect.api.app import create_app
 from autoops_architect.api.routes.schedules import execute_scheduled_workflow
 from autoops_architect.api.routes.workflows import _active_workflows
@@ -202,6 +203,17 @@ class TestSchedules:
     def clean_schedules(self) -> Iterator[None]:
         yield
         _schedules_db.clear()
+
+    def test_scheduler_stops_with_the_app(self) -> None:
+        with TestClient(create_app()) as test_client:
+            created = test_client.post(
+                "/api/v1/schedules",
+                json={"name": "Nightly", "cron": "0 9 * * *"},
+            )
+            assert created.status_code == 201, created.text
+            assert scheduler._scheduler is not None
+
+        assert scheduler._scheduler is None
 
     def test_unknown_timezone_is_a_client_error(self, client: TestClient) -> None:
         response = client.post(

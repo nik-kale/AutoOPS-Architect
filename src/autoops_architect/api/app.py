@@ -20,6 +20,7 @@ from autoops_architect.api.routes import (
     workflows_router,
 )
 from autoops_architect.metrics import get_metrics
+from autoops_architect.scheduler import shutdown_scheduler
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     print("AutoOps Architect API starting...")
     yield
     # Shutdown
+    shutdown_scheduler()
     print("AutoOps Architect API shutting down...")
 
 

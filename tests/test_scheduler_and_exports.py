@@ -35,6 +35,8 @@ def make_schedule(schedule_id: str = "s1", cron: str = "0 9 * * *") -> scheduler
 
 @pytest.fixture
 async def clean_scheduler() -> AsyncIterator[None]:
+    # A scheduler is bound to the event loop it started on
+    scheduler._scheduler = None
     yield
     scheduler.shutdown_scheduler()
     scheduler._schedules_db.clear()
