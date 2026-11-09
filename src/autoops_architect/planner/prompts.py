@@ -44,6 +44,7 @@ Available tools (you can reference these in nodes):
 - log_collector: Collect logs from services
 - metric_query: Query Prometheus/Datadog/CloudWatch metrics
 - trace_collector: Collect traces from Jaeger/Zipkin
+- log_analyzer: Analyze collected logs and metrics for patterns
 - autoRCA: AutoRCA-Core root cause analysis
 - summary: Generate text summaries
 - echo: Simple echo for testing
@@ -51,7 +52,6 @@ Available tools (you can reference these in nodes):
 - secureMCP:slack: Send Slack notifications via Secure-MCP-Gateway
 - secureMCP:pagerduty: Manage PagerDuty incidents
 - browser:ops-agent-desktop: Run browser missions
-- shell: Execute shell commands (use with caution)
 
 Output format: You must respond with valid JSON matching the WorkflowGraph schema."""
 
@@ -68,12 +68,12 @@ PLANNING_PROMPT_TEMPLATE = """
 
 {% if goal.environment and goal.environment != 'unknown' %}
 ## Environment
-{{ goal.environment }}
+{{ goal.environment.value }}
 {% endif %}
 
 {% if goal.priority and goal.priority != 'unknown' %}
 ## Priority
-{{ goal.priority }}
+{{ goal.priority.value }}
 {% endif %}
 
 {% if goal.context %}

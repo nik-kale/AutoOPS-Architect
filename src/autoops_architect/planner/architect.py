@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from autoops_architect.asyncio_utils import ensure_no_running_loop
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
+from autoops_architect.llm.cache import CacheConfig
+from autoops_architect.llm.cached_client import CachedLLMClient
 from autoops_architect.llm.providers import get_llm_client
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry
@@ -17,7 +19,18 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
-from autoops_architect.safety.sanitizer import PromptInjectionError, sanitize_goal
+from autoops_architect.safety.sanitizer import (
+    PromptInjectionError,
+    sanitize_goal,
+    sanitize_prompt_text,
+)
+
+REMEDIATION_TYPES = {
+    NodeType.SERVICE_RESTART,
+    NodeType.CONFIG_UPDATE,
+    NodeType.ROLLBACK,
+    NodeType.SCALE_ACTION,
+}
 
 
 class PlannerConfig(BaseModel):
@@ -27,11 +40,16 @@ class PlannerConfig(BaseModel):
         default=None, description="LLM configuration. If None, auto-detects from environment."
     )
 
+    cache_config: CacheConfig | None = Field(
+        default=None, description="Cache configuration for LLM responses."
+    )
+
     available_tools: list[str] = Field(
         default_factory=lambda: [
             "log_collector",
             "metric_query",
             "trace_collector",
+            "log_analyzer",
             "autoRCA",
             "summary",
             "echo",
@@ -120,10 +138,56 @@ class Architect:
 
     @property
     def llm_client(self) -> LLMClient:
-        """Get or create the LLM client."""
+        """Get or create the LLM client, wrapped with caching if configured."""
         if self._llm_client is None:
-            self._llm_client = get_llm_client(self.config.llm_config)
+            client = get_llm_client(self.config.llm_config)
+            cache_config = self.config.cache_config
+            if cache_config and cache_config.enabled:
+                client = CachedLLMClient(client, cache_config)
+            self._llm_client = client
         return self._llm_client
+
+    def _screen(self, text: str) -> str:
+        """Apply the configured prompt-injection policy to untrusted text."""
+        return sanitize_prompt_text(
+            text,
+            mode=self.config.sanitization_mode,
+            raise_on_injection=self.config.block_on_injection,
+        )
+
+    def _neutralize_memory(self, entry: MemoryEntry) -> MemoryEntry:
+        """Strip injection patterns from a past run before quoting it to the model."""
+
+        def clean(text: str | None) -> str | None:
+            if text is None:
+                return None
+            return sanitize_prompt_text(
+                text, mode=self.config.sanitization_mode, raise_on_injection=False
+            )
+
+        return entry.model_copy(
+            update={
+                "goal_description": clean(entry.goal_description),
+                "outcome_summary": clean(entry.outcome_summary),
+                "workflow_summary": clean(entry.workflow_summary),
+            }
+        )
+
+    def _enforce_limits(self, workflow: WorkflowGraph) -> None:
+        """Refuse a generated workflow that breaks the planner's configured limits."""
+        if len(workflow.nodes) > self.config.max_nodes:
+            raise ValueError(
+                f"Generated workflow has {len(workflow.nodes)} nodes, "
+                f"exceeding the maximum of {self.config.max_nodes}"
+            )
+
+        if not self.config.enable_remediation:
+            remediation = [n.id for n in workflow.nodes if n.type in REMEDIATION_TYPES]
+            if remediation:
+                raise ValueError(
+                    f"Generated workflow includes remediation steps {remediation} "
+                    "but remediation is disabled"
+                )
 
     async def plan(
         self,
@@ -148,20 +212,22 @@ class Architect:
             LLMError: If the LLM request fails.
             PromptInjectionError: If prompt injection is detected in goal.
         """
-        # Sanitize goal description to prevent prompt injection
+        # Everything the caller supplied ends up in the prompt, so screen all of it
         try:
-            sanitized_description = sanitize_goal(
+            goal.description = sanitize_goal(
                 goal.description,
                 mode=self.config.sanitization_mode,
                 raise_on_injection=self.config.block_on_injection,
             )
-            # Update goal with sanitized description
-            goal.description = sanitized_description
+            goal.services = [self._screen(service) for service in goal.services]
+            goal.tags = [self._screen(tag) for tag in goal.tags]
+            if goal.context:
+                goal.context = self._screen(goal.context)
+            constraints = [self._screen(constraint) for constraint in constraints or []]
         except PromptInjectionError:
-            # Re-raise with additional context
             raise
         except ValueError as e:
-            raise ValueError(f"Goal validation failed: {e}")
+            raise ValueError(f"Goal validation failed: {e}") from e
 
         # Retrieve similar workflows from memory if enabled
         if similar_workflows is None and self.config.use_memory and self._memory_backend:
@@ -171,10 +237,12 @@ class Architect:
                 limit=self.config.memory_limit,
             )
 
+        if similar_workflows:
+            similar_workflows = [self._neutralize_memory(entry) for entry in similar_workflows]
+
         # Build constraints list
         all_constraints = list(self.config.default_constraints)
-        if constraints:
-            all_constraints.extend(constraints)
+        all_constraints.extend(constraints)
 
         if not self.config.enable_remediation:
             all_constraints.append(
@@ -201,6 +269,7 @@ class Architect:
 
         # Parse and validate the workflow
         workflow = self._parse_workflow(workflow_data, goal)
+        self._enforce_limits(workflow)
 
         return workflow
 
@@ -250,8 +319,8 @@ class Architect:
         if "name" not in data:
             data["name"] = goal.description[:50]
 
-        if "goal_description" not in data:
-            data["goal_description"] = goal.description
+        # The goal is known; whatever the model echoed back is not authoritative
+        data["goal_description"] = goal.description
 
         # Parse nodes
         nodes = []
@@ -323,6 +392,8 @@ class Architect:
         Returns:
             A refined WorkflowGraph.
         """
+        feedback = self._screen(feedback)
+
         refinement_prompt = f"""
 ## Current Workflow
 
@@ -349,7 +420,9 @@ but incorporate the requested changes. Respond with the complete updated workflo
 
         # Create a Goal from the workflow for parsing
         goal = Goal(description=workflow.goal_description)
-        return self._parse_workflow(workflow_data, goal)
+        refined = self._parse_workflow(workflow_data, goal)
+        self._enforce_limits(refined)
+        return refined
 
     def validate_workflow(self, workflow: WorkflowGraph) -> list[str]:
         """
@@ -379,14 +452,8 @@ but incorporate the requested changes. Respond with the complete updated workflo
 
         # Check for remediation actions if disabled
         if not self.config.enable_remediation:
-            remediation_types = {
-                NodeType.SERVICE_RESTART,
-                NodeType.CONFIG_UPDATE,
-                NodeType.ROLLBACK,
-                NodeType.SCALE_ACTION,
-            }
             for node in workflow.nodes:
-                if node.type in remediation_types:
+                if node.type in REMEDIATION_TYPES:
                     issues.append(
                         f"Node '{node.id}' is a remediation action but remediation is disabled"
                     )

@@ -45,6 +45,7 @@ class ToolSafety(BaseModel):
             "metric_query",
             "trace_collector",
             "analysis",
+            "log_analyzer",
             "summary",
             "echo",
         ],

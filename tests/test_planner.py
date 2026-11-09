@@ -24,7 +24,7 @@ class TestPrompts:
         """Test formatting the planning prompt."""
         prompt = format_planning_prompt(goal=sample_goal)
 
-        assert "Goal:" in prompt
+        assert "## Goal" in prompt
         assert sample_goal.description in prompt
         assert "checkout-api" in prompt
         assert "production" in prompt
