@@ -336,8 +336,10 @@ config = ToolConfig(timeout_seconds=120)  # 2 minute timeout
 
 ### Retries
 
+`retry_count` is accepted on tools and nodes but the executor does not retry yet.
+
 ```python
-config = ToolConfig(retry_count=3)  # Retry 3 times on failure
+config = ToolConfig(retry_count=3)
 ```
 
 ## Context Passing
