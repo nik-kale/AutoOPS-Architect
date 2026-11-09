@@ -1,10 +1,6 @@
 """Tests for the FastAPI application."""
 
 import pytest
-
-# Skip all tests if FastAPI is not installed
-pytest.importorskip("fastapi")
-
 from fastapi.testclient import TestClient
 
 from autoops_architect.api.app import create_app

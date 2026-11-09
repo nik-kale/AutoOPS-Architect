@@ -270,12 +270,14 @@ class TestMemoryIntegration:
 
         # Semantic search with related query
         results = memory_backend.semantic_search(
-            query="server errors in shopping cart",
+            query="5xx errors in the checkout service",
             limit=10,
         )
 
-        # Should find related result (5xx errors in checkout)
-        assert len(results) >= 0  # May or may not match depending on threshold
+        assert [r.workflow_id for r in results] == [workflow.id]
+
+        # An unrelated query should not match it
+        assert memory_backend.semantic_search(query="printer toner levels", limit=10) == []
 
 
 class TestTemplateIntegration:

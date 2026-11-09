@@ -74,7 +74,7 @@ class TestWorkflowExecutor:
 
         assert result.workflow_id == sample_workflow.id
         assert len(result.node_results) == len(sample_workflow.nodes)
-        assert result.overall_status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED)
+        assert result.overall_status == ExecutionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_dry_run(self, sample_workflow, executor_registry):
@@ -203,7 +203,7 @@ class TestWorkflowExecutor:
 
         # n2 should still execute because n1 has continue_on_failure
         n2_result = result.get_node_result("n2")
-        assert n2_result.status in (ExecutionStatus.SUCCESS, ExecutionStatus.RUNNING)
+        assert n2_result.status == ExecutionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_single_node(self, executor_registry):
