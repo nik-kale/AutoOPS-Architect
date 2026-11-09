@@ -19,12 +19,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Titles and bodies are attacker-controlled text: pass them through env so
+      # the shell never parses them as code.
       - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
-
           # Check if title follows conventional commits format
-          if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|docs|refactor|perf|security|test|chore|style|ci|build)(\(.+\))?: .+'; then
+          if ! printf '%s\n' "$PR_TITLE" | grep -qE '^(feat|fix|docs|refactor|perf|security|test|chore|style|ci|build)(\(.+\))?: .+'; then
             echo "❌ PR title must follow conventional commits format:"
             echo "   feat: add new feature"
             echo "   fix: resolve bug"
@@ -38,9 +40,9 @@ jobs:
           echo "✅ PR title follows conventional commits format"
 
       - name: Check PR description
+        env:
+          DESCRIPTION: ${{ github.event.pull_request.body }}
         run: |
-          DESCRIPTION="${{ github.event.pull_request.body }}"
-
           if [ -z "$DESCRIPTION" ] || [ ${#DESCRIPTION} -lt 50 ]; then
             echo "❌ PR description is too short (minimum 50 characters)"
             echo "   Please provide a meaningful description of your changes"
@@ -50,12 +52,12 @@ jobs:
           echo "✅ PR description is adequate"
 
       - name: Check for breaking changes
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          PR_BODY="${{ github.event.pull_request.body }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-
           # Check if breaking change is indicated
-          if echo "$PR_TITLE" | grep -qE '!:' || echo "$PR_BODY" | grep -qiE 'breaking change'; then
+          if printf '%s\n' "$PR_TITLE" | grep -qE '!:' || printf '%s\n' "$PR_BODY" | grep -qiE 'breaking change'; then
             echo "⚠️  This PR contains breaking changes"
             echo "   Ensure version bump follows semantic versioning (major version increment)"
             # This is just a warning, not a failure
@@ -72,35 +74,37 @@ jobs:
           fetch-depth: 0
 
       - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git -c core.quotePath=false diff --name-only --diff-filter=ACMR \
+            "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
 
       - name: Check for large files
         run: |
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+          while IFS= read -r file; do
             if [ -f "$file" ]; then
               size=$(wc -c < "$file")
-              if [ $size -gt 1048576 ]; then  # 1MB
-                echo "❌ File $file is too large ($(($size / 1024))KB)"
+              if [ "$size" -gt 1048576 ]; then  # 1MB
+                echo "❌ File $file is too large ($((size / 1024))KB)"
                 echo "   Consider using Git LFS for large files"
                 exit 1
               fi
             fi
-          done
+          done < "$RUNNER_TEMP/changed-files.txt"
           echo "✅ No large files detected"
 
       - name: Check for sensitive files
         run: |
-          SENSITIVE_PATTERNS="*.pem *.key *.env .env.* *.p12 *.pfx id_rsa id_dsa"
-
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            for pattern in $SENSITIVE_PATTERNS; do
-              if echo "$file" | grep -q "$pattern"; then
+          while IFS= read -r file; do
+            case "$(basename "$file")" in
+              *.pem|*.key|*.env|.env|.env.*|*.p12|*.pfx|id_rsa|id_dsa)
                 echo "❌ Potentially sensitive file detected: $file"
                 exit 1
-              fi
-            done
-          done
+                ;;
+            esac
+          done < "$RUNNER_TEMP/changed-files.txt"
           echo "✅ No sensitive files detected"
 
   test-coverage:
@@ -139,8 +143,10 @@ jobs:
 
           echo "✅ Coverage $COVERAGE% meets threshold $THRESHOLD%"
 
+      # Reporting only: the threshold step above is the check.
       - name: Comment coverage on PR
         if: always()
+        continue-on-error: true
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
