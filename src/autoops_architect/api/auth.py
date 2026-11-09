@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional
 
+import bcrypt
+import jwt
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from jwt import InvalidTokenError as JWTError
 from pydantic import BaseModel, Field
 
 
@@ -19,8 +20,8 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTOOPS_TOKEN_EXPIRE_MINUTES", "60"))
 API_KEY_HEADER_NAME = "X-API-Key"
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only reads the first 72 bytes of a password and bcrypt>=5 raises on more.
+BCRYPT_MAX_PASSWORD_BYTES = 72
 
 # Security schemes
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -104,14 +105,23 @@ fake_users_db: dict[str, UserInDB] = {}
 fake_api_keys_db: dict[str, APIKey] = {}
 
 
+def _password_bytes(password: str) -> bytes:
+    """Encode a password for bcrypt, which ignores everything past 72 bytes."""
+    return password.encode("utf-8")[:BCRYPT_MAX_PASSWORD_BYTES]
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(_password_bytes(plain_password), hashed_password.encode("ascii"))
+    except ValueError:
+        # A malformed stored hash is a failed login, not a server error.
+        return False
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("ascii")
 
 
 def get_user(username: str) -> Optional[UserInDB]:

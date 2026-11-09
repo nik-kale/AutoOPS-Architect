@@ -386,4 +386,3 @@ Built with:
 - [Pydantic](https://pydantic.dev/) for data validation
 - [Typer](https://typer.tiangolo.com/) for CLI
 - [Rich](https://rich.readthedocs.io/) for terminal output
-- [NetworkX](https://networkx.org/) for graph operations
