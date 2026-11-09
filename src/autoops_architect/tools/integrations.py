@@ -123,7 +123,7 @@ class AutoRCATool(Tool):
                 raw_output=self._format_rca_result(mock_result),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"AutoRCA API error: {str(e)}",
                 raw_output=str(e),
             )
@@ -324,7 +324,7 @@ class MCPTool(Tool):
                 raw_output=f"[MOCK] Executed {server}:{action}",
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"MCP Gateway error: {str(e)}",
                 raw_output=str(e),
             )
@@ -690,7 +690,7 @@ class BrowserMissionTool(Tool):
                 raw_output=self._format_mission_result(result),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"Browser mission error: {str(e)}",
                 raw_output=str(e),
             )
@@ -926,7 +926,7 @@ class DatadogTool(Tool):
                 raw_output=json.dumps(result, indent=2),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"Datadog API error: {str(e)}",
                 raw_output=str(e),
             )

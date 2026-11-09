@@ -10,7 +10,13 @@ from autoops_architect.executor.engine import (
 from autoops_architect.models.execution import ExecutionStatus
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 from autoops_architect.tools.base import ToolRegistry
-from autoops_architect.tools.builtin import AnalysisTool, EchoTool, LogCollectorTool, SummaryTool
+from autoops_architect.tools.builtin import (
+    AnalysisTool,
+    EchoTool,
+    LogCollectorTool,
+    MetricQueryTool,
+    SummaryTool,
+)
 
 
 @pytest.fixture
@@ -21,6 +27,7 @@ def executor_registry():
     registry.register(LogCollectorTool())
     registry.register(SummaryTool())
     registry.register(AnalysisTool())
+    registry.register(MetricQueryTool())
     return registry
 
 
@@ -116,8 +123,7 @@ class TestWorkflowExecutor:
         result = await executor.execute(parallel_workflow)
 
         assert len(result.node_results) == len(parallel_workflow.nodes)
-        # With current sequential execution, all should complete
-        assert result.success_count >= 3  # At least start, one branch, and merge
+        assert result.success_count == len(parallel_workflow.nodes)
 
     @pytest.mark.asyncio
     async def test_execute_with_missing_tool(self):

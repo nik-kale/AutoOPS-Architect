@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 from autoops_architect.asyncio_utils import ensure_no_running_loop
 
 
+MCP_TOOL_ID = "secureMCP"
+
+# Alternative names accepted in workflow and template files.
+TOOL_ALIASES = {"analysis": "log_analyzer"}
+
+
 class ToolStatus(str, Enum):
     """Status of a tool execution."""
 
@@ -64,12 +70,14 @@ class ToolResult(BaseModel):
         cls,
         error_message: str,
         outputs: dict[str, Any] | None = None,
+        raw_output: str | None = None,
     ) -> "ToolResult":
         """Create a failed result."""
         return cls(
             status=ToolStatus.FAILED,
             error_message=error_message,
             outputs=outputs or {},
+            raw_output=raw_output,
         )
 
     @classmethod
@@ -265,9 +273,30 @@ class ToolRegistry:
         """
         return self._tools.get(tool_id)
 
+    def resolve(self, tool_ref: str) -> tuple["Tool | None", dict[str, Any]]:
+        """
+        Resolve a node's tool reference to a tool and the parameters it implies.
+
+        Workflows and templates may name a tool by its alias ("analysis") or
+        qualify it with a target ("secureMCP:jira").
+
+        Args:
+            tool_ref: The value of a node's ``tool`` field.
+
+        Returns:
+            The tool (None if unknown) and any parameters implied by the reference.
+        """
+        tool = self._tools.get(TOOL_ALIASES.get(tool_ref, tool_ref))
+        if tool is not None or ":" not in tool_ref:
+            return tool, {}
+
+        base, target = tool_ref.split(":", 1)
+        implied = {"server": target} if base == MCP_TOOL_ID else {}
+        return self._tools.get(base), implied
+
     def has(self, tool_id: str) -> bool:
         """Check if a tool is registered."""
-        return tool_id in self._tools
+        return self.resolve(tool_id)[0] is not None
 
     def list_tools(self) -> list[str]:
         """Get a list of all registered tool IDs."""
