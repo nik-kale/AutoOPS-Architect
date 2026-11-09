@@ -1,13 +1,13 @@
 """Template-related API routes."""
 
 import re
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import TemplateResponse, WorkflowResponse
 from autoops_architect.api.routes.workflows import _active_workflows, _workflow_to_response
-from autoops_architect.models.goal import Goal
+from autoops_architect.models.workflow import Node
 from autoops_architect.templates.registry import create_default_template_registry
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -16,10 +16,10 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 _template_registry = create_default_template_registry()
 
 
-@router.get("", response_model=list[TemplateResponse])
+@router.get("", response_model=list[TemplateResponse], dependencies=[requires("read:templates")])
 async def list_templates(
-    category: Optional[str] = Query(default=None, description="Filter by category"),
-    tag: Optional[str] = Query(default=None, description="Filter by tag"),
+    category: str | None = Query(default=None, description="Filter by category"),
+    tag: str | None = Query(default=None, description="Filter by tag"),
 ) -> list[TemplateResponse]:
     """List all available workflow templates."""
     templates = _template_registry.list(category=category)
@@ -40,7 +40,7 @@ async def list_templates(
     ]
 
 
-def _extract_template_variables(nodes: list) -> list[str]:
+def _extract_template_variables(nodes: list[Node]) -> list[str]:
     """Extract variable names from template nodes."""
     variables = set()
     pattern = r"\{\{(\w+)\}\}"
@@ -54,67 +54,17 @@ def _extract_template_variables(nodes: list) -> list[str]:
     return sorted(variables)
 
 
-@router.get("/{template_id}", response_model=TemplateResponse)
-async def get_template(template_id: str) -> TemplateResponse:
-    """Get a specific template by ID."""
-    template = _template_registry.get(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
-
-    return TemplateResponse(
-        id=template.id,
-        name=template.name,
-        description=template.description,
-        category=template.category,
-        tags=template.tags,
-        variables=_extract_template_variables(template.nodes),
-    )
-
-
-@router.post("/{template_id}/instantiate", response_model=WorkflowResponse)
-async def instantiate_template(
-    template_id: str,
-    goal_description: str = Query(..., description="Goal description for the workflow"),
-    service: Optional[str] = Query(default=None, description="Target service name"),
-    duration: str = Query(default="1h", description="Time window for data collection"),
-) -> WorkflowResponse:
-    """
-    Instantiate a workflow from a template.
-
-    This creates a concrete workflow from a template, substituting
-    variables with the provided values.
-    """
-    template = _template_registry.get(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
-
-    try:
-        workflow = template.instantiate(
-            goal_description=goal_description,
-            service=service,
-            duration=duration,
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to instantiate template: {str(e)}",
-        )
-
-    # Store the workflow
-    _active_workflows[workflow.id] = workflow
-
-    return _workflow_to_response(workflow)
-
-
-@router.get("/categories", response_model=list[str])
+@router.get("/categories", response_model=list[str], dependencies=[requires("read:templates")])
 async def list_categories() -> list[str]:
     """List all template categories."""
     templates = _template_registry.list()
-    categories = sorted(set(t.category for t in templates))
+    categories = sorted({t.category for t in templates})
     return categories
 
 
-@router.get("/search", response_model=list[TemplateResponse])
+@router.get(
+    "/search", response_model=list[TemplateResponse], dependencies=[requires("read:templates")]
+)
 async def search_templates(
     q: str = Query(..., min_length=2, description="Search query"),
 ) -> list[TemplateResponse]:
@@ -155,3 +105,62 @@ async def search_templates(
         )
         for _, t in results
     ]
+
+
+@router.get(
+    "/{template_id}", response_model=TemplateResponse, dependencies=[requires("read:templates")]
+)
+async def get_template(template_id: str) -> TemplateResponse:
+    """Get a specific template by ID."""
+    template = _template_registry.get(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    return TemplateResponse(
+        id=template.id,
+        name=template.name,
+        description=template.description,
+        category=template.category,
+        tags=template.tags,
+        variables=_extract_template_variables(template.nodes),
+    )
+
+
+@router.post(
+    "/{template_id}/instantiate",
+    response_model=WorkflowResponse,
+    dependencies=[requires("create:workflows")],
+)
+async def instantiate_template(
+    template_id: str,
+    goal_description: str = Query(..., description="Goal description for the workflow"),
+    service: str | None = Query(default=None, description="Target service name"),
+    duration: str | None = Query(default=None, description="Time window for data collection"),
+) -> WorkflowResponse:
+    """
+    Instantiate a workflow from a template.
+
+    This creates a concrete workflow from a template, substituting
+    variables with the provided values.
+    """
+    template = _template_registry.get(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    try:
+        overrides = {"duration": duration} if duration else {}
+        workflow = template.instantiate(
+            goal_description=goal_description,
+            service=service,
+            **overrides,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to instantiate template: {str(e)}",
+        ) from e
+
+    # Store the workflow
+    _active_workflows[workflow.id] = workflow
+
+    return _workflow_to_response(workflow)

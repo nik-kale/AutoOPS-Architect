@@ -1,11 +1,7 @@
 """Tests for structured logging."""
 
-import contextvars
 import logging
 from typing import Any
-
-import pytest
-import structlog
 
 from autoops_architect.logging import (
     LogContext,
@@ -55,11 +51,7 @@ class TestLogContext:
 
     def test_log_context_all_ids(self) -> None:
         """Test setting all correlation IDs."""
-        with LogContext(
-            workflow_id="wf-123",
-            execution_id="exec-456",
-            node_id="node-789"
-        ):
+        with LogContext(workflow_id="wf-123", execution_id="exec-456", node_id="node-789"):
             assert workflow_id_var.get() == "wf-123"
             assert execution_id_var.get() == "exec-456"
             assert node_id_var.get() == "node-789"
@@ -136,9 +128,7 @@ class TestRedactSensitiveData:
 
     def test_redact_api_key(self) -> None:
         """Test redacting API keys."""
-        event_dict: dict[str, Any] = {
-            "event": "Using api_key=sk-1234567890abcdefghij for request"
-        }
+        event_dict: dict[str, Any] = {"event": "Using api_key=sk-1234567890abcdefghij for request"}
         result = redact_sensitive_data(logging.getLogger(), "info", event_dict)
 
         assert "sk-1234567890abcdefghij" not in result["event"]
@@ -146,9 +136,7 @@ class TestRedactSensitiveData:
 
     def test_redact_password(self) -> None:
         """Test redacting passwords."""
-        event_dict: dict[str, Any] = {
-            "event": "Authenticating with password=supersecret123"
-        }
+        event_dict: dict[str, Any] = {"event": "Authenticating with password=supersecret123"}
         result = redact_sensitive_data(logging.getLogger(), "info", event_dict)
 
         assert "supersecret123" not in result["event"]
@@ -237,7 +225,7 @@ class TestLoggingIntegration:
         logger = get_logger("test")
 
         goal = Goal(
-            description="Test goal",
+            description="Test goal for the planner",
             services=["test-service"],
             environment=Environment.PRODUCTION,
             priority=Priority.HIGH,
@@ -249,4 +237,3 @@ class TestLoggingIntegration:
             environment=goal.environment.value,
         )
         # This should not raise an exception
-

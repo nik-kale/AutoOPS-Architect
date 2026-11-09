@@ -1,14 +1,16 @@
 """Workflow graph models representing the execution plan."""
 
 from datetime import datetime
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from autoops_architect.timeutils import utcnow
 
-class NodeType(str, Enum):
+
+class NodeType(StrEnum):
     """Types of nodes in a workflow graph."""
 
     # Data collection
@@ -38,6 +40,21 @@ class NodeType(str, Enum):
     WAIT = "wait"
     DECISION = "decision"
     HUMAN_REVIEW = "human_review"
+
+
+def _single_line(text: str) -> str:
+    """Collapse line breaks, which end a statement in the diagram languages."""
+    return " ".join(text.splitlines())
+
+
+def _mermaid_text(text: str) -> str:
+    """Make text safe inside a double-quoted Mermaid string."""
+    return _single_line(text).replace('"', "#quot;")
+
+
+def _dot_text(text: str) -> str:
+    """Make text safe inside a double-quoted Graphviz string."""
+    return _single_line(text).replace("\\", "\\\\").replace('"', '\\"')
 
 
 # Node types that require human approval by default
@@ -73,61 +90,48 @@ class Node(BaseModel):
         min_length=1,
         max_length=100,
         pattern=r"^[a-zA-Z0-9_-]+$",
-        description="Unique identifier for this node"
+        description="Unique identifier for this node",
     )
 
     name: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Short human-readable name for this step"
+        ..., min_length=1, max_length=200, description="Short human-readable name for this step"
     )
 
     description: str = Field(
-        default="",
-        max_length=1000,
-        description="Detailed description of what this step does"
+        default="", max_length=1000, description="Detailed description of what this step does"
     )
 
-    type: NodeType = Field(
-        ...,
-        description="The type of operation this node performs"
-    )
+    type: NodeType = Field(..., description="The type of operation this node performs")
 
     tool: str = Field(
         ...,
         min_length=1,
         max_length=100,
-        description="Identifier of the tool that will execute this node"
+        description="Identifier of the tool that will execute this node",
     )
 
     params: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Tool-specific parameters for execution"
+        default_factory=dict, description="Tool-specific parameters for execution"
     )
 
     requires_human_approval: bool = Field(
         default=False,
-        description="Whether this node requires explicit human approval before execution"
+        description="Whether this node requires explicit human approval before execution",
     )
 
-    timeout_seconds: Optional[int] = Field(
+    timeout_seconds: int | None = Field(
         default=None,
         ge=1,
         le=3600,
-        description="Maximum execution time in seconds (default: tool-specific)"
+        description="Maximum execution time in seconds (default: tool-specific)",
     )
 
     retry_count: int = Field(
-        default=0,
-        ge=0,
-        le=5,
-        description="Number of retry attempts on failure"
+        default=0, ge=0, le=5, description="Number of retry attempts on failure"
     )
 
     continue_on_failure: bool = Field(
-        default=False,
-        description="Whether to continue workflow execution if this node fails"
+        default=False, description="Whether to continue workflow execution if this node fails"
     )
 
     @model_validator(mode="after")
@@ -153,20 +157,14 @@ class Edge(BaseModel):
         ... )
     """
 
-    from_node_id: str = Field(
-        ...,
-        description="ID of the source node (dependency)"
-    )
+    from_node_id: str = Field(..., description="ID of the source node (dependency)")
 
-    to_node_id: str = Field(
-        ...,
-        description="ID of the target node (depends on source)"
-    )
+    to_node_id: str = Field(..., description="ID of the target node (depends on source)")
 
-    condition: Optional[str] = Field(
+    condition: str | None = Field(
         default=None,
         max_length=500,
-        description="Optional condition expression for conditional edges"
+        description="Optional condition expression for conditional edges",
     )
 
     @field_validator("from_node_id", "to_node_id")
@@ -196,46 +194,30 @@ class WorkflowGraph(BaseModel):
         ... )
     """
 
-    id: str = Field(
-        ...,
-        description="Unique identifier for this workflow"
-    )
+    id: str = Field(..., description="Unique identifier for this workflow")
 
     name: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Human-readable name for this workflow"
+        ..., min_length=1, max_length=200, description="Human-readable name for this workflow"
     )
 
-    goal_description: str = Field(
-        ...,
-        description="The original goal that generated this workflow"
-    )
+    goal_description: str = Field(..., description="The original goal that generated this workflow")
 
     nodes: list[Node] = Field(
-        default_factory=list,
-        description="List of nodes (steps) in the workflow"
+        default_factory=list, description="List of nodes (steps) in the workflow"
     )
 
     edges: list[Edge] = Field(
-        default_factory=list,
-        description="List of edges (dependencies) between nodes"
+        default_factory=list, description="List of edges (dependencies) between nodes"
     )
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="Timestamp when the workflow was created"
+        default_factory=utcnow, description="Timestamp when the workflow was created"
     )
 
-    version: str = Field(
-        default="1.0",
-        description="Schema version of this workflow"
-    )
+    version: str = Field(default="1.0", description="Schema version of this workflow")
 
     metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata (e.g., template source, environment)"
+        default_factory=dict, description="Additional metadata (e.g., template source, environment)"
     )
 
     @model_validator(mode="after")
@@ -256,17 +238,11 @@ class WorkflowGraph(BaseModel):
         # Check that all edge references are valid
         for edge in self.edges:
             if edge.from_node_id not in node_ids:
-                raise ValueError(
-                    f"Edge references non-existent node: {edge.from_node_id}"
-                )
+                raise ValueError(f"Edge references non-existent node: {edge.from_node_id}")
             if edge.to_node_id not in node_ids:
-                raise ValueError(
-                    f"Edge references non-existent node: {edge.to_node_id}"
-                )
+                raise ValueError(f"Edge references non-existent node: {edge.to_node_id}")
             if edge.from_node_id == edge.to_node_id:
-                raise ValueError(
-                    f"Self-referencing edge not allowed: {edge.from_node_id}"
-                )
+                raise ValueError(f"Self-referencing edge not allowed: {edge.from_node_id}")
 
         # Check for cycles using DFS
         if self._has_cycle():
@@ -299,14 +275,9 @@ class WorkflowGraph(BaseModel):
             state[node_id] = 2  # Mark as completed
             return False
 
-        for node_id in adj:
-            if state[node_id] == 0:
-                if dfs(node_id):
-                    return True
+        return any(state[node_id] == 0 and dfs(node_id) for node_id in adj)
 
-        return False
-
-    def get_node(self, node_id: str) -> Optional[Node]:
+    def get_node(self, node_id: str) -> Node | None:
         """Get a node by its ID."""
         for node in self.nodes:
             if node.id == node_id:
@@ -390,8 +361,7 @@ class WorkflowGraph(BaseModel):
 
         # Add nodes
         for node in self.nodes:
-            # Escape special characters in name
-            safe_name = node.name.replace('"', "'")
+            safe_name = _mermaid_text(node.name)
             shape_start, shape_end = ("[", "]")
 
             # Use different shapes for different node types
@@ -408,7 +378,7 @@ class WorkflowGraph(BaseModel):
         for edge in self.edges:
             arrow = "-->"
             if edge.condition:
-                arrow = f"-->|{edge.condition}|"
+                arrow = f'-->|"{_mermaid_text(edge.condition)}"|'
             lines.append(f"    {edge.from_node_id} {arrow} {edge.to_node_id}")
 
         return "\n".join(lines)
@@ -422,7 +392,7 @@ class WorkflowGraph(BaseModel):
         """
         lines = [
             "digraph workflow {",
-            '    rankdir=TB;',
+            "    rankdir=TB;",
             '    node [shape=box, style="rounded,filled", fontname="Arial"];',
             '    edge [fontname="Arial"];',
             "",
@@ -449,7 +419,7 @@ class WorkflowGraph(BaseModel):
 
         # Add nodes
         for node in self.nodes:
-            safe_name = node.name.replace('"', '\\"')
+            safe_name = _dot_text(node.name)
             color = type_colors.get(node.type, "#ffffff")
 
             # Mark approval-required nodes with a different border
@@ -469,7 +439,7 @@ class WorkflowGraph(BaseModel):
         for edge in self.edges:
             label = ""
             if edge.condition:
-                safe_condition = edge.condition.replace('"', '\\"')
+                safe_condition = _dot_text(edge.condition)
                 label = f' [label="{safe_condition}"]'
             lines.append(f'    "{edge.from_node_id}" -> "{edge.to_node_id}"{label};')
 
@@ -477,7 +447,7 @@ class WorkflowGraph(BaseModel):
 
         return "\n".join(lines)
 
-    def to_svg(self) -> Optional[str]:
+    def to_svg(self) -> str | None:
         """
         Generate an SVG representation using Graphviz.
 
@@ -517,27 +487,27 @@ class WorkflowGraph(BaseModel):
                             "name": "Collect checkout service logs",
                             "type": "log_collection",
                             "tool": "log_collector",
-                            "params": {"service": "checkout-api", "duration": "1h"}
+                            "params": {"service": "checkout-api", "duration": "1h"},
                         },
                         {
                             "id": "run-rca",
                             "name": "Run root cause analysis",
                             "type": "rca_call",
                             "tool": "autoRCA",
-                            "params": {}
+                            "params": {},
                         },
                         {
                             "id": "create-summary",
                             "name": "Create investigation summary",
                             "type": "summary",
                             "tool": "summary",
-                            "params": {}
-                        }
+                            "params": {},
+                        },
                     ],
                     "edges": [
                         {"from_node_id": "collect-logs", "to_node_id": "run-rca"},
-                        {"from_node_id": "run-rca", "to_node_id": "create-summary"}
-                    ]
+                        {"from_node_id": "run-rca", "to_node_id": "create-summary"},
+                    ],
                 }
             ]
         }

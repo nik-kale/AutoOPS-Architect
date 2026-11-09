@@ -1,8 +1,9 @@
 """Prompt templates for the Architect planner."""
 
-from typing import Optional
-
 from jinja2 import Template
+
+from autoops_architect.models.goal import Goal
+from autoops_architect.models.memory import MemoryEntry
 
 SYSTEM_PROMPT = """You are AutoOps Architect, an expert SRE and operations automation system.
 
@@ -46,6 +47,7 @@ Available tools (you can reference these in nodes):
 - log_collector: Collect logs from services
 - metric_query: Query Prometheus/Datadog/CloudWatch metrics
 - trace_collector: Collect traces from Jaeger/Zipkin
+- log_analyzer: Analyze collected logs and metrics for patterns
 - autoRCA: AutoRCA-Core root cause analysis
 - summary: Generate text summaries
 - echo: Simple echo for testing
@@ -53,7 +55,6 @@ Available tools (you can reference these in nodes):
 - secureMCP:slack: Send Slack notifications via Secure-MCP-Gateway
 - secureMCP:pagerduty: Manage PagerDuty incidents
 - browser:ops-agent-desktop: Run browser missions
-- shell: Execute shell commands (use with caution)
 
 Output format: You must respond with valid JSON matching the WorkflowGraph schema."""
 
@@ -70,12 +71,12 @@ PLANNING_PROMPT_TEMPLATE = """
 
 {% if goal.environment and goal.environment != 'unknown' %}
 ## Environment
-{{ goal.environment }}
+{{ goal.environment.value }}
 {% endif %}
 
 {% if goal.priority and goal.priority != 'unknown' %}
 ## Priority
-{{ goal.priority }}
+{{ goal.priority.value }}
 {% endif %}
 
 {% if goal.context %}
@@ -148,10 +149,10 @@ Generate the workflow now:
 
 
 def format_planning_prompt(
-    goal: "Goal",  # type: ignore[name-defined]
-    similar_workflows: Optional[list] = None,
-    available_tools: Optional[list[str]] = None,
-    constraints: Optional[list[str]] = None,
+    goal: Goal,
+    similar_workflows: list[MemoryEntry] | None = None,
+    available_tools: list[str] | None = None,
+    constraints: list[str] | None = None,
 ) -> str:
     """
     Format the planning prompt with the given goal and context.
@@ -167,11 +168,13 @@ def format_planning_prompt(
     """
     template = Template(PLANNING_PROMPT_TEMPLATE)
 
-    return template.render(
-        goal=goal,
-        similar_workflows=similar_workflows or [],
-        available_tools=available_tools,
-        constraints=constraints or [],
+    return str(
+        template.render(
+            goal=goal,
+            similar_workflows=similar_workflows or [],
+            available_tools=available_tools,
+            constraints=constraints or [],
+        )
     )
 
 

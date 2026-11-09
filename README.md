@@ -55,6 +55,9 @@ cd AutoOPS-Architect
 # Install with pip
 pip install -e .
 
+# Add the web UI and API
+pip install -e ".[web]"
+
 # Or with development dependencies
 pip install -e ".[dev]"
 ```
@@ -180,6 +183,12 @@ export ANTHROPIC_API_KEY="sk-..."
 export AUTORCA_URL="http://localhost:8080"
 export MCP_GATEWAY_URL="http://localhost:3000"
 export OPS_AGENT_DESKTOP_URL="http://localhost:9090"
+
+# Web API (see docs/security.md)
+export AUTOOPS_AUTH_ENABLED=true
+export AUTOOPS_SECRET_KEY="a-long-random-string"
+export AUTOOPS_CREATE_ADMIN=true
+export AUTOOPS_ADMIN_PASSWORD="choose-a-password"
 ```
 
 ### Using Different LLM Providers
@@ -222,6 +231,7 @@ AutoOps Architect supports transparent LLM response caching to reduce costs and 
 - Supports memory, filesystem, and Redis backends
 
 ```python
+from autoops_architect.llm import CachedLLMClient
 from autoops_architect.llm.cache import CacheConfig
 from autoops_architect.planner import Architect, PlannerConfig
 
@@ -386,4 +396,3 @@ Built with:
 - [Pydantic](https://pydantic.dev/) for data validation
 - [Typer](https://typer.tiangolo.com/) for CLI
 - [Rich](https://rich.readthedocs.io/) for terminal output
-- [NetworkX](https://networkx.org/) for graph operations

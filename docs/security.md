@@ -19,9 +19,9 @@ AutoOps Architect is a meta-agent system that executes workflows in response to 
 - Rollbacks without proper validation
 
 **Mitigations:**
-- All remediation actions are disabled by default (`enable_remediation=False`)
-- High-risk node types require explicit human approval
-- Workflows are validated before execution
+- Remediation is disabled by default (`enable_remediation=False`): the planner refuses a generated workflow containing remediation steps
+- High-risk node types require explicit human approval, and nothing downstream of an unapproved step runs
+- Generated workflows are checked against the planner's node limit
 - LLM prompts include explicit safety constraints
 
 **Configuration:**
@@ -48,18 +48,20 @@ config = PlannerConfig(
 - System compromise
 
 **Mitigations:**
-- Custom script tools run with explicit approval
-- Shell commands are not directly exposed in built-in tools
+- `custom_script` nodes require explicit approval
+- No shell tool ships with the package
 - Tool registry controls which tools are available
-- Input parameters are validated and sanitized
+- `SafetyValidator` reports dangerous patterns in parameters when you call it
 
 **Configuration:**
 ```python
-from autoops_architect.safety import SafetyConfig
+from autoops_architect.safety import SafetyConfig, ToolSafety
 
 safety = SafetyConfig(
-    allowed_tools=["log_collector", "metric_query", "summary"],  # Whitelist
-    blocked_tools=["custom_script"],  # Blacklist
+    tools=ToolSafety(
+        allowed=["log_collector", "metric_query", "summary"],  # Whitelist
+        blocked=["custom_script"],  # Blacklist
+    )
 )
 ```
 
@@ -76,7 +78,7 @@ safety = SafetyConfig(
 **Mitigations:**
 - Credentials should be stored in environment variables
 - Sensitive fields are redacted in logs
-- Memory backend supports encryption option
+- Memory files are created readable only by their owner; their contents are not encrypted
 - Workflow JSON should not contain actual secrets
 
 **Best Practices:**
@@ -102,19 +104,18 @@ workflow_params = {
 
 **Mitigations:**
 - Per-node timeout limits
-- Global workflow timeout
-- Rate limiting for LLM and external API calls
 - Concurrency limits for parallel execution
+- Size limits on goals, service lists and webhook payloads
+
+There is no global workflow timeout or LLM rate limit yet.
 
 **Configuration:**
 ```python
 from autoops_architect.executor import ExecutorConfig
 
 config = ExecutorConfig(
-    default_timeout=60,      # Per-node timeout (seconds)
-    workflow_timeout=600,    # Total workflow timeout
-    max_concurrency=5,       # Parallel execution limit
-    rate_limit_llm=10,       # LLM calls per minute
+    default_timeout_seconds=60,  # Per-node timeout
+    max_concurrency=5,           # Parallel execution limit
 )
 ```
 
@@ -128,17 +129,17 @@ config = ExecutorConfig(
 - Inject unwanted instructions
 
 **Mitigations:**
-- User input is sanitized before inclusion in prompts
+- The goal, services, tags, context, constraints and refinement feedback are screened before inclusion in prompts, and text from past runs has injection patterns removed
 - System prompts include explicit safety boundaries
-- Generated workflows are validated
-- Approval requirements cannot be bypassed
+- Generated workflows are checked against the planner's limits
+- The API refuses to clear the approval requirement on dangerous node types
 
 **Input Sanitization:**
 ```python
 from autoops_architect.safety import sanitize_goal
 
 safe_goal = sanitize_goal(user_input)
-# Strips dangerous patterns, validates length, escapes special chars
+# Blocks known injection patterns and validates length
 ```
 
 ### 6. Memory Backend Tampering
@@ -153,9 +154,8 @@ safe_goal = sanitize_goal(user_input)
 
 **Mitigations:**
 - Memory files have restricted permissions
-- SQLite backend supports encryption
 - Memory entries are validated on load
-- File paths are validated to prevent traversal
+- An unreadable JSON memory file is moved aside rather than overwritten
 
 ### 7. Tool Registry Manipulation
 
@@ -167,10 +167,7 @@ safe_goal = sanitize_goal(user_input)
 - By modifying the registry at runtime
 
 **Mitigations:**
-- Tool registration is explicit
-- Tool classes are validated
-- Dynamic tool loading requires approval
-- Registry changes are logged
+- Tool registration is explicit in code; tools are not loaded dynamically
 
 ### 8. Network-Based Attacks
 
@@ -183,10 +180,12 @@ safe_goal = sanitize_goal(user_input)
 - Authentication bypass
 
 **Mitigations:**
-- Web UI binds to localhost by default
-- CORS is restricted by default
+- `autoops serve` and the Compose file publish the web UI on localhost only
+- Cross-origin requests are refused unless `AUTOOPS_CORS_ORIGINS` allows them
+- With `AUTOOPS_AUTH_ENABLED=true`, every API route requires a bearer token or API key with the right permission (the bundled web UI does not send credentials yet)
+- Webhook triggers must carry a valid HMAC signature
 - API endpoints validate input
-- SSE streams are per-session
+- Each SSE stream is scoped to one execution
 
 ## Safety Features
 
@@ -209,24 +208,21 @@ Certain operations require explicit human approval:
 
 ### 2. Workflow Validation
 
-Before execution, workflows are validated for:
-- Maximum node count limits
-- Required approval flags on dangerous nodes
-- Valid tool references
-- Proper edge connections (no orphans, no cycles)
-- Parameter schema compliance
+Every `WorkflowGraph` validates its structure when it is built: unique node IDs, edges that reference real nodes, and no cycles. Dangerous node types always carry the approval flag.
+
+`SafetyValidator` adds policy checks (node count, allowed tools and node types, suspicious parameters). It runs when you call it; the executor does not invoke it for you.
 
 ### 3. Tool Whitelisting
 
 Configure which tools are available:
 
 ```python
-from autoops_architect.tools import create_default_registry
-from autoops_architect.safety import apply_whitelist
+from autoops_architect.safety import SafetyConfig, SafetyValidator, ToolSafety
 
-registry = create_default_registry()
-apply_whitelist(registry, ["log_collector", "metric_query", "summary"])
-# Only these tools will be available for workflow execution
+config = SafetyConfig(tools=ToolSafety(allowed=["log_collector", "metric_query", "summary"]))
+result = SafetyValidator(config).validate_workflow(workflow)
+if not result.valid:
+    raise ValueError([issue.message for issue in result.errors])
 ```
 
 ### 4. Dry Run Mode
@@ -247,25 +243,25 @@ executor = WorkflowExecutor(
 
 ### 5. Audit Logging
 
-All significant events are logged:
-- Workflow creation and execution
-- Node execution start/completion
-- Tool invocations
-- Approval requests and responses
+Workflow execution is logged with correlation IDs:
+- Workflow start and completion
+- Node start, completion and failure
 - Errors and failures
+
+Sensitive values such as API keys and passwords are redacted from log output.
 
 ```python
 import logging
 
 logging.getLogger("autoops_architect").setLevel(logging.INFO)
-# Logs include timestamps, user context, and operation details
+# Logs include timestamps and operation details
 ```
 
 ## Security Configuration
 
 ### Global Safety Settings
 
-Create a safety configuration file at `~/.autoops/safety.yaml`:
+`SafetyValidator` reads its policy from `~/.autoops/safety.yaml`:
 
 ```yaml
 # Safety configuration for AutoOps Architect
@@ -335,6 +331,13 @@ approval:
 | `AUTOOPS_REQUIRE_APPROVAL` | Require approval for all actions | `false` |
 | `AUTOOPS_DRY_RUN` | Enable dry run mode globally | `false` |
 | `AUTOOPS_LOG_LEVEL` | Logging level | `INFO` |
+| `AUTOOPS_AUTH_ENABLED` | Require credentials on API routes | `false` |
+| `AUTOOPS_SECRET_KEY` | JWT signing key (random per process if unset) | unset |
+| `AUTOOPS_TOKEN_EXPIRE_MINUTES` | Access token lifetime | `60` |
+| `AUTOOPS_CREATE_ADMIN` | Create the first admin at startup | `false` |
+| `AUTOOPS_ADMIN_USERNAME` | Name of that admin | `admin` |
+| `AUTOOPS_ADMIN_PASSWORD` | Its password; no account is created without one | unset |
+| `AUTOOPS_CORS_ORIGINS` | Comma-separated origins allowed cross-origin access | none |
 
 ## Security Best Practices
 

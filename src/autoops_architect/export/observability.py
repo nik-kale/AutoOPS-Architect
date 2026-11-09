@@ -4,10 +4,10 @@ import json
 import logging
 import os
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Callable, Dict, Generator, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,65 +17,52 @@ logger = logging.getLogger(__name__)
 class TracingConfig(BaseModel):
     """Configuration for distributed tracing."""
 
-    enabled: bool = Field(
-        default=False,
-        description="Whether tracing is enabled"
-    )
+    enabled: bool = Field(default=False, description="Whether tracing is enabled")
 
-    service_name: str = Field(
-        default="autoops-architect",
-        description="Service name for traces"
-    )
+    service_name: str = Field(default="autoops-architect", description="Service name for traces")
 
     exporter: str = Field(
-        default="console",
-        description="Trace exporter: console, jaeger, otlp, zipkin"
+        default="console", description="Trace exporter: console, jaeger, otlp, zipkin"
     )
 
-    endpoint: Optional[str] = Field(
-        default=None,
-        description="Exporter endpoint URL"
-    )
+    endpoint: str | None = Field(default=None, description="Exporter endpoint URL")
 
-    sample_rate: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="Sampling rate (0.0-1.0)"
-    )
+    sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Sampling rate (0.0-1.0)")
 
-    headers: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Additional headers for exporter"
+    headers: dict[str, str] = Field(
+        default_factory=dict, description="Additional headers for exporter"
     )
 
 
 @dataclass
 class SpanData:
     """Data for a trace span."""
+
     name: str
     trace_id: str
     span_id: str
-    parent_span_id: Optional[str] = None
+    parent_span_id: str | None = None
     start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
+    end_time: float | None = None
     status: str = "ok"
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    events: List[Dict[str, Any]] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
-    def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
+    def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
         """Add an event to the span."""
-        self.events.append({
-            "name": name,
-            "timestamp": time.time(),
-            "attributes": attributes or {},
-        })
+        self.events.append(
+            {
+                "name": name,
+                "timestamp": time.time(),
+                "attributes": attributes or {},
+            }
+        )
 
     def set_attribute(self, key: str, value: Any) -> None:
         """Set a span attribute."""
         self.attributes[key] = value
 
-    def set_status(self, status: str, message: Optional[str] = None) -> None:
+    def set_status(self, status: str, message: str | None = None) -> None:
         """Set span status."""
         self.status = status
         if message:
@@ -92,7 +79,7 @@ class SpanData:
             return (time.time() - self.start_time) * 1000
         return (self.end_time - self.start_time) * 1000
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for export."""
         return {
             "name": self.name,
@@ -103,8 +90,7 @@ class SpanData:
             "endTimeUnixNano": int((self.end_time or time.time()) * 1e9),
             "status": {"code": self.status},
             "attributes": [
-                {"key": k, "value": {"stringValue": str(v)}}
-                for k, v in self.attributes.items()
+                {"key": k, "value": {"stringValue": str(v)}} for k, v in self.attributes.items()
             ],
             "events": [
                 {
@@ -123,23 +109,24 @@ class SpanData:
 class Tracer:
     """Simple tracer for workflow execution."""
 
-    def __init__(self, config: Optional[TracingConfig] = None) -> None:
+    def __init__(self, config: TracingConfig | None = None) -> None:
         """Initialize tracer."""
         self.config = config or TracingConfig()
-        self._active_spans: Dict[str, SpanData] = {}
-        self._completed_spans: List[SpanData] = []
+        self._active_spans: dict[str, SpanData] = {}
+        self._completed_spans: list[SpanData] = []
 
     def _generate_id(self) -> str:
         """Generate a unique ID."""
         import uuid
+
         return uuid.uuid4().hex[:16]
 
     @contextmanager
     def span(
         self,
         name: str,
-        parent_span_id: Optional[str] = None,
-        attributes: Optional[Dict[str, Any]] = None,
+        parent_span_id: str | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> Generator[SpanData, None, None]:
         """
         Create a new span.
@@ -209,16 +196,23 @@ class Tracer:
             import httpx
 
             data = {
-                "resourceSpans": [{
-                    "resource": {
-                        "attributes": [
-                            {"key": "service.name", "value": {"stringValue": self.config.service_name}},
+                "resourceSpans": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {"stringValue": self.config.service_name},
+                                },
+                            ],
+                        },
+                        "scopeSpans": [
+                            {
+                                "spans": [span.to_dict()],
+                            }
                         ],
-                    },
-                    "scopeSpans": [{
-                        "spans": [span.to_dict()],
-                    }],
-                }],
+                    }
+                ],
             }
 
             httpx.post(
@@ -235,10 +229,10 @@ class Tracer:
 
 
 # Global tracer instance
-_tracer: Optional[Tracer] = None
+_tracer: Tracer | None = None
 
 
-def setup_tracing(config: Optional[TracingConfig] = None) -> Tracer:
+def setup_tracing(config: TracingConfig | None = None) -> Tracer:
     """
     Setup tracing with the given configuration.
 
@@ -289,7 +283,7 @@ def trace_workflow_execution(
     tracer = get_tracer()
 
     with tracer.span(
-        f"workflow.execute",
+        "workflow.execute",
         attributes={
             "workflow.id": workflow_id,
             "workflow.name": workflow_name,
@@ -303,8 +297,8 @@ def trace_node_execution(
     node_id: str,
     node_name: str,
     node_type: str,
-    tool: Optional[str] = None,
-    parent_span_id: Optional[str] = None,
+    tool: str | None = None,
+    parent_span_id: str | None = None,
 ) -> Generator[SpanData, None, None]:
     """
     Context manager for tracing node execution.
@@ -343,28 +337,28 @@ class MetricsExporter:
 
     def __init__(self) -> None:
         """Initialize metrics exporter."""
-        self._counters: Dict[str, int] = {}
-        self._histograms: Dict[str, List[float]] = {}
-        self._gauges: Dict[str, float] = {}
+        self._counters: dict[str, int] = {}
+        self._histograms: dict[str, list[float]] = {}
+        self._gauges: dict[str, float] = {}
 
-    def increment(self, name: str, value: int = 1, labels: Optional[Dict[str, str]] = None) -> None:
+    def increment(self, name: str, value: int = 1, labels: dict[str, str] | None = None) -> None:
         """Increment a counter."""
         key = self._make_key(name, labels)
         self._counters[key] = self._counters.get(key, 0) + value
 
-    def observe(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+    def observe(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         """Record a histogram observation."""
         key = self._make_key(name, labels)
         if key not in self._histograms:
             self._histograms[key] = []
         self._histograms[key].append(value)
 
-    def set(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+    def set(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
         """Set a gauge value."""
         key = self._make_key(name, labels)
         self._gauges[key] = value
 
-    def _make_key(self, name: str, labels: Optional[Dict[str, str]]) -> str:
+    def _make_key(self, name: str, labels: dict[str, str] | None) -> str:
         """Create a metric key from name and labels."""
         if not labels:
             return name
@@ -382,27 +376,32 @@ class MetricsExporter:
 
         # Histograms
         for key, values in self._histograms.items():
-            base_name = key.split('{')[0]
+            base_name, brace, labels = key.partition("{")
             lines.append(f"# TYPE {base_name} histogram")
             if values:
-                lines.append(f"{key}_count {len(values)}")
-                lines.append(f"{key}_sum {sum(values)}")
+                lines.append(f"{base_name}_count{brace}{labels} {len(values)}")
+                lines.append(f"{base_name}_sum{brace}{labels} {sum(values)}")
 
         # Gauges
-        for key, value in self._gauges.items():
+        for key, gauge in self._gauges.items():
             lines.append(f"# TYPE {key.split('{')[0]} gauge")
-            lines.append(f"{key} {value}")
+            lines.append(f"{key} {gauge}")
 
         return "\n".join(lines)
 
     def to_json(self) -> str:
         """Export metrics as JSON."""
-        return json.dumps({
-            "counters": self._counters,
-            "histograms": {k: {"count": len(v), "sum": sum(v), "values": v[:100]}
-                          for k, v in self._histograms.items()},
-            "gauges": self._gauges,
-        }, indent=2)
+        return json.dumps(
+            {
+                "counters": self._counters,
+                "histograms": {
+                    k: {"count": len(v), "sum": sum(v), "values": v[:100]}
+                    for k, v in self._histograms.items()
+                },
+                "gauges": self._gauges,
+            },
+            indent=2,
+        )
 
     def clear(self) -> None:
         """Clear all metrics."""
@@ -412,7 +411,7 @@ class MetricsExporter:
 
 
 # Global metrics instance
-_metrics: Optional[MetricsExporter] = None
+_metrics: MetricsExporter | None = None
 
 
 def get_metrics() -> MetricsExporter:
@@ -425,8 +424,9 @@ def get_metrics() -> MetricsExporter:
 
 # Convenience functions for common metrics
 
+
 def record_workflow_execution(
-    workflow_id: str,
+    workflow_id: str,  # noqa: ARG001 - public signature, too high-cardinality for a label
     status: str,
     duration_seconds: float,
     node_count: int,

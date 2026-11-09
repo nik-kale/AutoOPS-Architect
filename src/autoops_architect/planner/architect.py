@@ -1,13 +1,15 @@
 """Architect - the meta-agent that generates workflow plans from goals."""
 
-import json
+import asyncio
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
+from autoops_architect.llm.cache import CacheConfig
+from autoops_architect.llm.cached_client import CachedLLMClient
 from autoops_architect.llm.providers import get_llm_client
 from autoops_architect.models.goal import Goal
 from autoops_architect.models.memory import MemoryEntry
@@ -16,15 +18,30 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
-from autoops_architect.safety.sanitizer import sanitize_goal, PromptInjectionError
+from autoops_architect.safety.sanitizer import (
+    PromptInjectionError,
+    sanitize_goal,
+    sanitize_prompt_text,
+)
+from autoops_architect.timeutils import utcnow
+
+REMEDIATION_TYPES = {
+    NodeType.SERVICE_RESTART,
+    NodeType.CONFIG_UPDATE,
+    NodeType.ROLLBACK,
+    NodeType.SCALE_ACTION,
+}
 
 
 class PlannerConfig(BaseModel):
     """Configuration for the Architect planner."""
 
-    llm_config: Optional[LLMConfig] = Field(
-        default=None,
-        description="LLM configuration. If None, auto-detects from environment."
+    llm_config: LLMConfig | None = Field(
+        default=None, description="LLM configuration. If None, auto-detects from environment."
+    )
+
+    cache_config: CacheConfig | None = Field(
+        default=None, description="Cache configuration for LLM responses."
     )
 
     available_tools: list[str] = Field(
@@ -32,13 +49,14 @@ class PlannerConfig(BaseModel):
             "log_collector",
             "metric_query",
             "trace_collector",
+            "log_analyzer",
             "autoRCA",
             "summary",
             "echo",
             "secureMCP:jira",
             "secureMCP:slack",
         ],
-        description="List of available tool identifiers"
+        description="List of available tool identifiers",
     )
 
     default_constraints: list[str] = Field(
@@ -47,41 +65,34 @@ class PlannerConfig(BaseModel):
             "All remediation actions require human approval",
             "Keep workflows focused and actionable",
         ],
-        description="Default constraints for all planning requests"
+        description="Default constraints for all planning requests",
     )
 
     max_nodes: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum number of nodes in a workflow"
+        default=20, ge=1, le=100, description="Maximum number of nodes in a workflow"
     )
 
     enable_remediation: bool = Field(
-        default=False,
-        description="Whether to allow remediation actions in generated workflows"
+        default=False, description="Whether to allow remediation actions in generated workflows"
     )
 
     use_memory: bool = Field(
-        default=True,
-        description="Whether to retrieve similar past workflows from memory"
+        default=True, description="Whether to retrieve similar past workflows from memory"
     )
 
     memory_limit: int = Field(
         default=3,
         ge=0,
         le=10,
-        description="Maximum number of similar workflows to include as context"
+        description="Maximum number of similar workflows to include as context",
     )
 
     sanitization_mode: str = Field(
-        default="strict",
-        description="Input sanitization mode: strict, moderate, or permissive"
+        default="strict", description="Input sanitization mode: strict, moderate, or permissive"
     )
 
     block_on_injection: bool = Field(
-        default=True,
-        description="Whether to block requests when prompt injection is detected"
+        default=True, description="Whether to block requests when prompt injection is detected"
     )
 
 
@@ -106,10 +117,10 @@ class Architect:
 
     def __init__(
         self,
-        config: Optional[PlannerConfig] = None,
-        llm_client: Optional[LLMClient] = None,
-        memory_backend: Optional[Any] = None,
-        template_registry: Optional[Any] = None,
+        config: PlannerConfig | None = None,
+        llm_client: LLMClient | None = None,
+        memory_backend: Any | None = None,
+        template_registry: Any | None = None,
     ) -> None:
         """
         Initialize the Architect.
@@ -127,16 +138,62 @@ class Architect:
 
     @property
     def llm_client(self) -> LLMClient:
-        """Get or create the LLM client."""
+        """Get or create the LLM client, wrapped with caching if configured."""
         if self._llm_client is None:
-            self._llm_client = get_llm_client(self.config.llm_config)
+            client = get_llm_client(self.config.llm_config)
+            cache_config = self.config.cache_config
+            if cache_config and cache_config.enabled:
+                client = CachedLLMClient(client, cache_config)
+            self._llm_client = client
         return self._llm_client
+
+    def _screen(self, text: str) -> str:
+        """Apply the configured prompt-injection policy to untrusted text."""
+        return sanitize_prompt_text(
+            text,
+            mode=self.config.sanitization_mode,
+            raise_on_injection=self.config.block_on_injection,
+        )
+
+    def _neutralize_memory(self, entry: MemoryEntry) -> MemoryEntry:
+        """Strip injection patterns from a past run before quoting it to the model."""
+
+        def clean(text: str | None) -> str | None:
+            if text is None:
+                return None
+            return sanitize_prompt_text(
+                text, mode=self.config.sanitization_mode, raise_on_injection=False
+            )
+
+        return entry.model_copy(
+            update={
+                "goal_description": clean(entry.goal_description),
+                "outcome_summary": clean(entry.outcome_summary),
+                "workflow_summary": clean(entry.workflow_summary),
+            }
+        )
+
+    def _enforce_limits(self, workflow: WorkflowGraph) -> None:
+        """Refuse a generated workflow that breaks the planner's configured limits."""
+        if len(workflow.nodes) > self.config.max_nodes:
+            raise ValueError(
+                f"Generated workflow has {len(workflow.nodes)} nodes, "
+                f"exceeding the maximum of {self.config.max_nodes}"
+            )
+
+        if not self.config.enable_remediation:
+            remediation = [n.id for n in workflow.nodes if n.type in REMEDIATION_TYPES]
+            if remediation:
+                raise ValueError(
+                    f"Generated workflow includes remediation steps {remediation} "
+                    "but remediation is disabled"
+                )
 
     async def plan(
         self,
         goal: Goal,
-        constraints: Optional[list[str]] = None,
-        similar_workflows: Optional[list[MemoryEntry]] = None,
+        constraints: list[str] | None = None,
+        similar_workflows: list[MemoryEntry] | None = None,
     ) -> WorkflowGraph:
         """
         Generate a workflow graph from a goal.
@@ -155,20 +212,22 @@ class Architect:
             LLMError: If the LLM request fails.
             PromptInjectionError: If prompt injection is detected in goal.
         """
-        # Sanitize goal description to prevent prompt injection
+        # Everything the caller supplied ends up in the prompt, so screen all of it
         try:
-            sanitized_description = sanitize_goal(
+            goal.description = sanitize_goal(
                 goal.description,
                 mode=self.config.sanitization_mode,
                 raise_on_injection=self.config.block_on_injection,
             )
-            # Update goal with sanitized description
-            goal.description = sanitized_description
+            goal.services = [self._screen(service) for service in goal.services]
+            goal.tags = [self._screen(tag) for tag in goal.tags]
+            if goal.context:
+                goal.context = self._screen(goal.context)
+            constraints = [self._screen(constraint) for constraint in constraints or []]
         except PromptInjectionError:
-            # Re-raise with additional context
             raise
         except ValueError as e:
-            raise ValueError(f"Goal validation failed: {e}")
+            raise ValueError(f"Goal validation failed: {e}") from e
 
         # Retrieve similar workflows from memory if enabled
         if similar_workflows is None and self.config.use_memory and self._memory_backend:
@@ -178,10 +237,12 @@ class Architect:
                 limit=self.config.memory_limit,
             )
 
+        if similar_workflows:
+            similar_workflows = [self._neutralize_memory(entry) for entry in similar_workflows]
+
         # Build constraints list
         all_constraints = list(self.config.default_constraints)
-        if constraints:
-            all_constraints.extend(constraints)
+        all_constraints.extend(constraints)
 
         if not self.config.enable_remediation:
             all_constraints.append(
@@ -208,14 +269,15 @@ class Architect:
 
         # Parse and validate the workflow
         workflow = self._parse_workflow(workflow_data, goal)
+        self._enforce_limits(workflow)
 
         return workflow
 
     def plan_sync(
         self,
         goal: Goal,
-        constraints: Optional[list[str]] = None,
-        similar_workflows: Optional[list[MemoryEntry]] = None,
+        constraints: list[str] | None = None,
+        similar_workflows: list[MemoryEntry] | None = None,
     ) -> WorkflowGraph:
         """
         Synchronous version of plan().
@@ -227,16 +289,12 @@ class Architect:
 
         Returns:
             A WorkflowGraph ready for execution.
+
+        Raises:
+            RuntimeError: If called from inside a running event loop.
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
+        ensure_no_running_loop("plan_sync", "plan")
+        return asyncio.run(
             self.plan(goal, constraints=constraints, similar_workflows=similar_workflows)
         )
 
@@ -261,8 +319,8 @@ class Architect:
         if "name" not in data:
             data["name"] = goal.description[:50]
 
-        if "goal_description" not in data:
-            data["goal_description"] = goal.description
+        # The goal is known; whatever the model echoed back is not authoritative
+        data["goal_description"] = goal.description
 
         # Parse nodes
         nodes = []
@@ -290,7 +348,7 @@ class Architect:
                 )
                 nodes.append(node)
             except Exception as e:
-                raise ValueError(f"Invalid node data: {node_data}. Error: {e}")
+                raise ValueError(f"Invalid node data: {node_data}. Error: {e}") from e
 
         # Parse edges
         edges = []
@@ -303,7 +361,7 @@ class Architect:
                 )
                 edges.append(edge)
             except Exception as e:
-                raise ValueError(f"Invalid edge data: {edge_data}. Error: {e}")
+                raise ValueError(f"Invalid edge data: {edge_data}. Error: {e}") from e
 
         # Create the workflow
         workflow = WorkflowGraph(
@@ -312,7 +370,7 @@ class Architect:
             goal_description=data["goal_description"],
             nodes=nodes,
             edges=edges,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             version="1.0",
             metadata=data.get("metadata", {}),
         )
@@ -334,6 +392,8 @@ class Architect:
         Returns:
             A refined WorkflowGraph.
         """
+        feedback = self._screen(feedback)
+
         refinement_prompt = f"""
 ## Current Workflow
 
@@ -360,7 +420,9 @@ but incorporate the requested changes. Respond with the complete updated workflo
 
         # Create a Goal from the workflow for parsing
         goal = Goal(description=workflow.goal_description)
-        return self._parse_workflow(workflow_data, goal)
+        refined = self._parse_workflow(workflow_data, goal)
+        self._enforce_limits(refined)
+        return refined
 
     def validate_workflow(self, workflow: WorkflowGraph) -> list[str]:
         """
@@ -386,37 +448,30 @@ but incorporate the requested changes. Respond with the complete updated workflo
         for node in workflow.nodes:
             if node.tool not in known_tools:
                 # Only warn, don't fail - could be a custom tool
-                issues.append(
-                    f"Node '{node.id}' uses unknown tool '{node.tool}'"
-                )
+                issues.append(f"Node '{node.id}' uses unknown tool '{node.tool}'")
 
         # Check for remediation actions if disabled
         if not self.config.enable_remediation:
-            remediation_types = {
-                NodeType.SERVICE_RESTART,
-                NodeType.CONFIG_UPDATE,
-                NodeType.ROLLBACK,
-                NodeType.SCALE_ACTION,
-            }
             for node in workflow.nodes:
-                if node.type in remediation_types:
+                if node.type in REMEDIATION_TYPES:
                     issues.append(
                         f"Node '{node.id}' is a remediation action but remediation is disabled"
                     )
 
         # Check that all approval-required nodes are marked correctly
         for node in workflow.nodes:
-            if node.type in {
-                NodeType.SERVICE_RESTART,
-                NodeType.CONFIG_UPDATE,
-                NodeType.ROLLBACK,
-                NodeType.SCALE_ACTION,
-                NodeType.CUSTOM_SCRIPT,
-            }:
-                if not node.requires_human_approval:
-                    issues.append(
-                        f"Node '{node.id}' ({node.type.value}) should require human approval"
-                    )
+            if (
+                node.type
+                in {
+                    NodeType.SERVICE_RESTART,
+                    NodeType.CONFIG_UPDATE,
+                    NodeType.ROLLBACK,
+                    NodeType.SCALE_ACTION,
+                    NodeType.CUSTOM_SCRIPT,
+                }
+                and not node.requires_human_approval
+            ):
+                issues.append(f"Node '{node.id}' ({node.type.value}) should require human approval")
 
         return issues
 
@@ -442,6 +497,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         template = self._template_registry.get(template_id)
@@ -468,6 +524,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         return [
@@ -481,7 +538,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
             for t in self._template_registry.list()
         ]
 
-    def find_matching_template(self, goal: Goal) -> Optional[str]:
+    def find_matching_template(self, goal: Goal) -> str | None:
         """
         Find a template that matches the given goal.
 
@@ -495,6 +552,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         keywords = goal.get_keywords()
@@ -519,17 +577,20 @@ but incorporate the requested changes. Respond with the complete updated workflo
                     score += 1
 
             # Check for specific keywords
-            if "5xx" in goal_lower or "error" in goal_lower:
-                if "error" in template.category or "error" in str(template.tags):
-                    score += 3
+            if ("5xx" in goal_lower or "error" in goal_lower) and (
+                "error" in template.category or "error" in str(template.tags)
+            ):
+                score += 3
 
-            if "latency" in goal_lower or "slow" in goal_lower:
-                if "performance" in template.category or "latency" in str(template.tags):
-                    score += 3
+            if ("latency" in goal_lower or "slow" in goal_lower) and (
+                "performance" in template.category or "latency" in str(template.tags)
+            ):
+                score += 3
 
-            if "auth" in goal_lower or "login" in goal_lower:
-                if "security" in template.category or "auth" in str(template.tags):
-                    score += 3
+            if ("auth" in goal_lower or "login" in goal_lower) and (
+                "security" in template.category or "auth" in str(template.tags)
+            ):
+                score += 3
 
             if score > best_score:
                 best_score = score

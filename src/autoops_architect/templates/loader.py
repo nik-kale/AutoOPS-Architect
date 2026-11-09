@@ -1,10 +1,9 @@
 """Template loader for loading templates from files and directories."""
 
+import contextlib
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -18,24 +17,12 @@ def get_builtin_templates_dir() -> Path:
     Get the directory containing built-in YAML templates.
 
     Returns:
-        Path to the templates/ directory in the project root.
+        Path to the YAML templates shipped inside the package.
     """
-    # Try to find relative to this file
-    module_dir = Path(__file__).parent.parent.parent.parent
-    templates_dir = module_dir / "templates"
-    if templates_dir.exists():
-        return templates_dir
-
-    # Try current working directory
-    cwd_templates = Path.cwd() / "templates"
-    if cwd_templates.exists():
-        return cwd_templates
-
-    # Return module dir path even if it doesn't exist yet
-    return templates_dir
+    return Path(__file__).parent / "builtin"
 
 
-def get_project_templates_dir() -> Optional[Path]:
+def get_project_templates_dir() -> Path | None:
     """
     Get the project-level templates directory.
 
@@ -126,10 +113,7 @@ class TemplateLoader:
         patterns = ["*.json", "*.yaml", "*.yml"]
 
         for pattern in patterns:
-            if recursive:
-                files = path.rglob(pattern)
-            else:
-                files = path.glob(pattern)
+            files = path.rglob(pattern) if recursive else path.glob(pattern)
 
             for file_path in files:
                 try:
@@ -257,8 +241,8 @@ def load_all_file_templates() -> list[WorkflowTemplate]:
     Returns:
         List of all loaded templates from files.
     """
-    templates = []
-    seen_ids = set()
+    templates: list[WorkflowTemplate] = []
+    seen_ids: set[str] = set()
 
     # Load in order, later templates override earlier ones
     for directory in discover_template_directories():
@@ -289,7 +273,6 @@ def create_registry_with_file_templates(
         A TemplateRegistry with all templates.
     """
     from autoops_architect.templates.registry import (
-        create_default_template_registry,
         get_builtin_templates,
     )
 
@@ -298,10 +281,8 @@ def create_registry_with_file_templates(
     # First add code-defined templates
     if include_builtin_code:
         for template in get_builtin_templates():
-            try:
+            with contextlib.suppress(ValueError):  # Skip duplicates
                 registry.register(template)
-            except ValueError:
-                pass  # Skip duplicates
 
     # Then add file-based templates (can override code-defined ones)
     file_templates = load_all_file_templates()
@@ -323,7 +304,7 @@ class TemplateDiscovery:
 
     def __init__(self) -> None:
         """Initialize template discovery."""
-        self._cache: Optional[list[WorkflowTemplate]] = None
+        self._cache: list[WorkflowTemplate] | None = None
 
     def get_template_sources(self) -> dict[str, Path]:
         """
@@ -366,7 +347,7 @@ class TemplateDiscovery:
     def find_template(
         self,
         template_id: str,
-    ) -> Optional[tuple[WorkflowTemplate, str]]:
+    ) -> tuple[WorkflowTemplate, str] | None:
         """
         Find a template by ID and return it with its source.
 

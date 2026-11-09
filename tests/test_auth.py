@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 
-import pytest
 from fastapi.testclient import TestClient
 
 from autoops_architect.api.app import create_app
@@ -330,6 +329,7 @@ class TestAuthIntegration:
     def teardown_method(self) -> None:
         """Clean up after tests."""
         import os
+
         os.environ["AUTOOPS_AUTH_ENABLED"] = "false"
 
     def test_create_workflow_requires_auth(self) -> None:
@@ -372,4 +372,3 @@ class TestAuthIntegration:
 
         # Should work (status 200 or workflow created)
         assert response.status_code in [200, 201]
-

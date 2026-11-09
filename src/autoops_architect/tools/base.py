@@ -1,13 +1,21 @@
 """Base tool interface and registry for AutoOps Architect."""
 
+import asyncio
 from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Any, Optional, Type
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 
-class ToolStatus(str, Enum):
+MCP_TOOL_ID = "secureMCP"
+
+# Alternative names accepted in workflow and template files.
+TOOL_ALIASES = {"analysis": "log_analyzer"}
+
+
+class ToolStatus(StrEnum):
     """Status of a tool execution."""
 
     SUCCESS = "success"
@@ -23,42 +31,30 @@ class ToolResult(BaseModel):
     Captures the outcome, outputs, and any errors from tool execution.
     """
 
-    status: ToolStatus = Field(
-        default=ToolStatus.SUCCESS,
-        description="Execution status"
-    )
+    status: ToolStatus = Field(default=ToolStatus.SUCCESS, description="Execution status")
 
     outputs: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Structured outputs from the tool"
+        default_factory=dict, description="Structured outputs from the tool"
     )
 
-    raw_output: Optional[str] = Field(
-        default=None,
-        description="Raw text/log output"
-    )
+    raw_output: str | None = Field(default=None, description="Raw text/log output")
 
-    error_message: Optional[str] = Field(
-        default=None,
-        description="Error message if execution failed"
-    )
+    error_message: str | None = Field(default=None, description="Error message if execution failed")
 
     artifacts: list[str] = Field(
-        default_factory=list,
-        description="Paths or URLs to generated artifacts"
+        default_factory=list, description="Paths or URLs to generated artifacts"
     )
 
     metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata about the execution"
+        default_factory=dict, description="Additional metadata about the execution"
     )
 
     @classmethod
     def success(
         cls,
-        outputs: Optional[dict[str, Any]] = None,
-        raw_output: Optional[str] = None,
-        artifacts: Optional[list[str]] = None,
+        outputs: dict[str, Any] | None = None,
+        raw_output: str | None = None,
+        artifacts: list[str] | None = None,
     ) -> "ToolResult":
         """Create a successful result."""
         return cls(
@@ -72,13 +68,15 @@ class ToolResult(BaseModel):
     def failed(
         cls,
         error_message: str,
-        outputs: Optional[dict[str, Any]] = None,
+        outputs: dict[str, Any] | None = None,
+        raw_output: str | None = None,
     ) -> "ToolResult":
         """Create a failed result."""
         return cls(
             status=ToolStatus.FAILED,
             error_message=error_message,
             outputs=outputs or {},
+            raw_output=raw_output,
         )
 
     @classmethod
@@ -93,23 +91,14 @@ class ToolResult(BaseModel):
 class ToolConfig(BaseModel):
     """Base configuration for tools."""
 
-    enabled: bool = Field(
-        default=True,
-        description="Whether this tool is enabled"
-    )
+    enabled: bool = Field(default=True, description="Whether this tool is enabled")
 
     timeout_seconds: int = Field(
-        default=60,
-        ge=1,
-        le=3600,
-        description="Default timeout for tool execution"
+        default=60, ge=1, le=3600, description="Default timeout for tool execution"
     )
 
     retry_count: int = Field(
-        default=0,
-        ge=0,
-        le=5,
-        description="Number of retry attempts on failure"
+        default=0, ge=0, le=5, description="Number of retry attempts on failure"
     )
 
 
@@ -135,7 +124,7 @@ class Tool(ABC):
         ...         return ToolResult.success({"result": "done"})
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         """Initialize the tool with optional configuration."""
         self.config = config or ToolConfig()
 
@@ -168,7 +157,7 @@ class Tool(ABC):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """
         Execute the tool with the given parameters.
@@ -185,7 +174,7 @@ class Tool(ABC):
     def execute_sync(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """
         Synchronous wrapper for execute().
@@ -197,15 +186,8 @@ class Tool(ABC):
         Returns:
             ToolResult containing the execution outcome.
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(self.execute(params, context))
+        ensure_no_running_loop("execute_sync", "execute")
+        return asyncio.run(self.execute(params, context))
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         """
@@ -265,8 +247,8 @@ class ToolRegistry:
 
     def register_class(
         self,
-        tool_class: Type[Tool],
-        config: Optional[ToolConfig] = None,
+        tool_class: type[Tool],
+        config: ToolConfig | None = None,
     ) -> None:
         """
         Register a tool class (instantiates it).
@@ -278,7 +260,7 @@ class ToolRegistry:
         tool = tool_class(config=config)
         self.register(tool)
 
-    def get(self, tool_id: str) -> Optional[Tool]:
+    def get(self, tool_id: str) -> Tool | None:
         """
         Get a tool by its ID.
 
@@ -290,9 +272,30 @@ class ToolRegistry:
         """
         return self._tools.get(tool_id)
 
+    def resolve(self, tool_ref: str) -> tuple["Tool | None", dict[str, Any]]:
+        """
+        Resolve a node's tool reference to a tool and the parameters it implies.
+
+        Workflows and templates may name a tool by its alias ("analysis") or
+        qualify it with a target ("secureMCP:jira").
+
+        Args:
+            tool_ref: The value of a node's ``tool`` field.
+
+        Returns:
+            The tool (None if unknown) and any parameters implied by the reference.
+        """
+        tool = self._tools.get(TOOL_ALIASES.get(tool_ref, tool_ref))
+        if tool is not None or ":" not in tool_ref:
+            return tool, {}
+
+        base, target = tool_ref.split(":", 1)
+        implied = {"server": target} if base == MCP_TOOL_ID else {}
+        return self._tools.get(base), implied
+
     def has(self, tool_id: str) -> bool:
         """Check if a tool is registered."""
-        return tool_id in self._tools
+        return self.resolve(tool_id)[0] is not None
 
     def list_tools(self) -> list[str]:
         """Get a list of all registered tool IDs."""
@@ -300,11 +303,7 @@ class ToolRegistry:
 
     def list_enabled_tools(self) -> list[str]:
         """Get a list of enabled tool IDs."""
-        return [
-            tool_id
-            for tool_id, tool in self._tools.items()
-            if tool.config.enabled
-        ]
+        return [tool_id for tool_id, tool in self._tools.items() if tool.config.enabled]
 
     def get_tool_info(self) -> list[dict[str, Any]]:
         """
@@ -331,18 +330,18 @@ class ToolRegistry:
             A new registry with built-in tools registered.
         """
         from autoops_architect.tools.builtin import (
+            AnalysisTool,
             EchoTool,
             LogCollectorTool,
-            SummaryTool,
             MetricQueryTool,
-            AnalysisTool,
+            SummaryTool,
             TraceCollectorTool,
         )
         from autoops_architect.tools.integrations import (
             AutoRCATool,
-            MCPTool,
             BrowserMissionTool,
             DatadogTool,
+            MCPTool,
         )
 
         registry = ToolRegistry()

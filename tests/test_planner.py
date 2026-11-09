@@ -3,14 +3,12 @@
 import pytest
 
 from autoops_architect.llm.base import LLMConfig, LLMProvider
-from autoops_architect.llm.providers import MockLLMClient
-from autoops_architect.models.goal import Goal
 from autoops_architect.models.workflow import NodeType, WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
 from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
-    format_planning_prompt,
     WORKFLOW_JSON_SCHEMA,
+    format_planning_prompt,
 )
 
 
@@ -26,7 +24,7 @@ class TestPrompts:
         """Test formatting the planning prompt."""
         prompt = format_planning_prompt(goal=sample_goal)
 
-        assert "Goal:" in prompt
+        assert "## Goal" in prompt
         assert sample_goal.description in prompt
         assert "checkout-api" in prompt
         assert "production" in prompt
@@ -130,7 +128,7 @@ class TestArchitect:
         config = PlannerConfig(max_nodes=2)
         architect = Architect(config=config)
 
-        from autoops_architect.models.workflow import Node, NodeType
+        from autoops_architect.models.workflow import Node
 
         workflow = WorkflowGraph(
             id="wf-test",
@@ -151,7 +149,7 @@ class TestArchitect:
         """Test validation catches unapproved dangerous operations."""
         architect = Architect()
 
-        from autoops_architect.models.workflow import Node, NodeType
+        from autoops_architect.models.workflow import Node
 
         # Note: Node auto-sets approval for dangerous types,
         # so we need to override it
@@ -161,9 +159,6 @@ class TestArchitect:
             type=NodeType.SERVICE_RESTART,
             tool="shell",
         )
-        # Force override (in real code this shouldn't happen)
-        object.__setattr__(node, "requires_human_approval", False)
-
         workflow = WorkflowGraph(
             id="wf-test",
             name="Test",
@@ -171,6 +166,10 @@ class TestArchitect:
             nodes=[node],
             edges=[],
         )
+
+        # Force override after construction: building the graph re-runs the
+        # node validator, which restores the flag (in real code this shouldn't happen)
+        object.__setattr__(workflow.nodes[0], "requires_human_approval", False)
 
         issues = architect.validate_workflow(workflow)
         assert any("should require human approval" in issue for issue in issues)
@@ -207,9 +206,7 @@ class TestMockLLMClient:
         """Test mock completion."""
         from autoops_architect.llm.base import LLMMessage
 
-        response = await mock_llm_client.complete([
-            LLMMessage(role="user", content="Hello")
-        ])
+        response = await mock_llm_client.complete([LLMMessage(role="user", content="Hello")])
 
         assert response.content is not None
         assert response.model == "mock-model"
@@ -219,9 +216,9 @@ class TestMockLLMClient:
         """Test mock JSON completion."""
         from autoops_architect.llm.base import LLMMessage
 
-        response = await mock_llm_client.complete_json([
-            LLMMessage(role="user", content="Generate a workflow")
-        ])
+        response = await mock_llm_client.complete_json(
+            [LLMMessage(role="user", content="Generate a workflow")]
+        )
 
         assert isinstance(response, dict)
         assert "nodes" in response
@@ -231,11 +228,7 @@ class TestMockLLMClient:
         """Test that mock tracks call history."""
         from autoops_architect.llm.base import LLMMessage
 
-        mock_llm_client.sync_complete([
-            LLMMessage(role="user", content="Test 1")
-        ])
-        mock_llm_client.sync_complete([
-            LLMMessage(role="user", content="Test 2")
-        ])
+        mock_llm_client.sync_complete([LLMMessage(role="user", content="Test 1")])
+        mock_llm_client.sync_complete([LLMMessage(role="user", content="Test 2")])
 
         assert len(mock_llm_client.call_history) == 2

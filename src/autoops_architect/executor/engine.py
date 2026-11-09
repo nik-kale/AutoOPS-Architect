@@ -3,19 +3,22 @@
 import asyncio
 import operator
 import re
-from datetime import datetime
-from typing import Any, Callable, Optional, Protocol
+from collections.abc import AsyncIterator, Callable, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 from autoops_architect.logging import LogContext, get_logger
 from autoops_architect.models.execution import (
     ExecutionStatus,
     NodeResult,
     WorkflowRunResult,
 )
-from autoops_architect.models.workflow import Edge, Node, WorkflowGraph
-from autoops_architect.tools.base import Tool, ToolRegistry, ToolResult, ToolStatus
+from autoops_architect.models.workflow import Node, WorkflowGraph
+from autoops_architect.timeutils import utcnow
+from autoops_architect.tools.base import ToolRegistry, ToolStatus
 
 logger = get_logger(__name__)
 
@@ -69,16 +72,14 @@ class ConditionEvaluator:
 
         # Extract expression from {{ }} if present
         match = re.match(r"\{\{\s*(.+?)\s*\}\}", condition.strip())
-        if match:
-            expression = match.group(1)
-        else:
-            expression = condition.strip()
+        expression = match.group(1) if match else condition.strip()
 
         try:
             return self._evaluate_expression(expression)
-        except Exception:
-            # If evaluation fails, default to True (execute the edge)
-            return True
+        except Exception as e:
+            # A guard that cannot be evaluated must not open the edge
+            logger.warning("edge_condition_evaluation_failed", condition=condition, error=str(e))
+            return False
 
     def _evaluate_expression(self, expression: str) -> bool:
         """Evaluate a simple expression."""
@@ -109,7 +110,7 @@ class ConditionEvaluator:
                 parts = expression.split(op_str, 1)
                 left = self._resolve_value(parts[0].strip())
                 right = self._resolve_value(parts[1].strip())
-                return op_func(left, right)
+                return bool(op_func(left, right))
 
         # If no operator, treat as a boolean check
         value = self._resolve_value(expression.strip())
@@ -118,8 +119,9 @@ class ConditionEvaluator:
     def _resolve_value(self, token: str) -> Any:
         """Resolve a token to its actual value."""
         # Handle string literals
-        if (token.startswith("'") and token.endswith("'")) or \
-           (token.startswith('"') and token.endswith('"')):
+        if (token.startswith("'") and token.endswith("'")) or (
+            token.startswith('"') and token.endswith('"')
+        ):
             return token[1:-1]
 
         # Handle numeric literals
@@ -175,48 +177,50 @@ class ExecutionCallback(Protocol):
         self,
         node_id: str,
         status: ExecutionStatus,
-        result: Optional[NodeResult] = None,
+        result: NodeResult | None = None,
+        /,
     ) -> None:
         """Called when a node's status changes."""
         ...
+
+
+@dataclass
+class _RunState:
+    """What has happened so far in a run, used to decide what may still run."""
+
+    completed: set[str] = field(default_factory=set)
+    failed: set[str] = field(default_factory=set)
+    # Failed without continue_on_failure, or skipped because of a node that did.
+    blocking: set[str] = field(default_factory=set)
+    # Held at an approval gate, or downstream of a node that was.
+    unapproved: set[str] = field(default_factory=set)
+    skipped_by_condition: set[str] = field(default_factory=set)
 
 
 class ExecutorConfig(BaseModel):
     """Configuration for the workflow executor."""
 
     max_concurrency: int = Field(
-        default=1,
-        ge=1,
-        le=10,
-        description="Maximum number of nodes to execute in parallel"
+        default=1, ge=1, le=10, description="Maximum number of nodes to execute in parallel"
     )
 
     default_timeout_seconds: int = Field(
-        default=120,
-        ge=1,
-        le=3600,
-        description="Default timeout for node execution"
+        default=120, ge=1, le=3600, description="Default timeout for node execution"
     )
 
     stop_on_failure: bool = Field(
-        default=True,
-        description="Whether to stop execution when a node fails"
+        default=True, description="Whether to stop execution when a node fails"
     )
 
     require_approval_for_dangerous: bool = Field(
-        default=True,
-        description="Require human approval for dangerous operations"
+        default=True, description="Require human approval for dangerous operations"
     )
 
     auto_approve: bool = Field(
-        default=False,
-        description="Automatically approve all approval requests (use with caution)"
+        default=False, description="Automatically approve all approval requests (use with caution)"
     )
 
-    dry_run: bool = Field(
-        default=False,
-        description="Simulate execution without running tools"
-    )
+    dry_run: bool = Field(default=False, description="Simulate execution without running tools")
 
 
 class WorkflowExecutor:
@@ -238,9 +242,9 @@ class WorkflowExecutor:
 
     def __init__(
         self,
-        config: Optional[ExecutorConfig] = None,
-        tool_registry: Optional[ToolRegistry] = None,
-        approval_callback: Optional[Callable[[Node], bool]] = None,
+        config: ExecutorConfig | None = None,
+        tool_registry: ToolRegistry | None = None,
+        approval_callback: Callable[[Node], bool] | None = None,
     ) -> None:
         """
         Initialize the executor.
@@ -262,6 +266,7 @@ class WorkflowExecutor:
     def _create_default_registry(self) -> ToolRegistry:
         """Create a default tool registry with built-in tools."""
         from autoops_architect.tools.base import create_default_registry
+
         return create_default_registry()
 
     def add_status_callback(self, callback: ExecutionCallback) -> None:
@@ -272,19 +277,20 @@ class WorkflowExecutor:
         self,
         node_id: str,
         status: ExecutionStatus,
-        result: Optional[NodeResult] = None,
+        result: NodeResult | None = None,
     ) -> None:
         """Notify all callbacks of a status change."""
         for callback in self._status_callbacks:
             try:
                 callback(node_id, status, result)
-            except Exception:
-                pass  # Don't let callback errors break execution
+            except Exception as e:
+                # Don't let callback errors break execution
+                logger.warning("status_callback_failed", node_id=node_id, error=str(e))
 
     async def execute(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Execute a workflow graph.
@@ -300,7 +306,7 @@ class WorkflowExecutor:
         run_result = WorkflowRunResult(
             workflow_id=workflow.id,
             goal_description=workflow.goal_description,
-            started_at=datetime.utcnow(),
+            started_at=utcnow(),
         )
 
         logger.info(
@@ -327,84 +333,17 @@ class WorkflowExecutor:
             logger.error("workflow_topological_sort_failed", workflow_id=workflow.id, error=str(e))
             run_result.overall_status = ExecutionStatus.FAILED
             run_result.summary = f"Failed to sort workflow: {e}"
-            run_result.finished_at = datetime.utcnow()
+            run_result.finished_at = utcnow()
             return run_result
 
-        # Track completed nodes for dependency checking
-        completed_nodes: set[str] = set()
-        failed_nodes: set[str] = set()
-        skipped_by_condition: set[str] = set()
-
-        # Build edge lookup for condition checking
-        edges_to_node: dict[str, list[Edge]] = {}
-        for edge in workflow.edges:
-            if edge.to_node_id not in edges_to_node:
-                edges_to_node[edge.to_node_id] = []
-            edges_to_node[edge.to_node_id].append(edge)
+        state = _RunState()
 
         # Execute nodes in order
         for node in execution_order:
             node_result = node_results[node.id]
 
-            # Check if dependencies are satisfied
-            deps = workflow.get_dependencies(node.id)
-            deps_failed = any(d in failed_nodes for d in deps)
-            deps_skipped_by_condition = all(d in skipped_by_condition for d in deps) if deps else False
-
-            # Check edge conditions - all incoming edges with conditions must pass
-            incoming_edges = edges_to_node.get(node.id, [])
-            edge_conditions_met = True
-            if incoming_edges:
-                evaluator = ConditionEvaluator(self._execution_context)
-                for edge in incoming_edges:
-                    if edge.condition:
-                        if not evaluator.evaluate(edge.condition):
-                            edge_conditions_met = False
-                            break
-
-            if not edge_conditions_met:
-                # Skip this node - condition not met
-                node_result.mark_skipped(f"Edge condition not met")
-                skipped_by_condition.add(node.id)
-                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
+            if not self._passes_gates(node, workflow, node_result, state):
                 continue
-
-            if deps_skipped_by_condition:
-                # All dependencies were skipped by condition, skip this too
-                node_result.mark_skipped("All dependencies skipped by condition")
-                skipped_by_condition.add(node.id)
-                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                continue
-
-            if deps_failed and not node.continue_on_failure:
-                # Skip this node - dependency failed
-                node_result.mark_skipped("Dependency failed")
-                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                continue
-
-            # Check for human approval if required
-            if node.requires_human_approval and self.config.require_approval_for_dangerous:
-                if not self.config.auto_approve:
-                    if self.approval_callback:
-                        approved = self.approval_callback(node)
-                        if not approved:
-                            node_result.mark_skipped("Human approval denied")
-                            self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                            continue
-                    else:
-                        # No approval callback - mark as waiting
-                        node_result.status = ExecutionStatus.WAITING_APPROVAL
-                        self._notify_status(
-                            node.id, ExecutionStatus.WAITING_APPROVAL, node_result
-                        )
-                        # In a real implementation, we would wait for approval
-                        # For now, skip the node
-                        node_result.mark_skipped("No approval mechanism available")
-                        continue
-
-            # Execute the node
-            self._notify_status(node.id, ExecutionStatus.RUNNING)
-            node_result.mark_started()
 
             with LogContext(workflow_id=workflow.id, node_id=node.id):
                 logger.info(
@@ -415,54 +354,20 @@ class WorkflowExecutor:
                     requires_approval=node.requires_human_approval,
                 )
 
-                try:
-                    if self.config.dry_run:
-                        # Simulate execution
-                        await self._dry_run_node(node, node_result)
-                    else:
-                        # Real execution
-                        await self._execute_node(node, node_result)
+                await self._run_node(node, node_result, state)
 
-                    completed_nodes.add(node.id)
-
-                    # Store outputs in context for downstream nodes
-                    self._execution_context[node.id] = node_result.outputs
-
-                    logger.info(
-                        "node_execution_completed",
-                        node_id=node.id,
-                        status=node_result.status.value,
-                        duration_seconds=node_result.duration_seconds,
+                if self._should_stop([node], state):
+                    logger.warning(
+                        "workflow_execution_stopping",
+                        reason="node_failure",
+                        failed_node=node.id,
                     )
-
-                except Exception as e:
-                    node_result.mark_failed(str(e))
-                    failed_nodes.add(node.id)
-
-                    logger.error(
-                        "node_execution_failed",
-                        node_id=node.id,
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
-
-                    if self.config.stop_on_failure and not node.continue_on_failure:
-                        logger.warning(
-                            "workflow_execution_stopping",
-                            reason="node_failure",
-                            failed_node=node.id,
-                        )
-                        # Mark remaining nodes as skipped
-                        for remaining in execution_order:
-                            if remaining.id not in completed_nodes and remaining.id not in failed_nodes:
-                                node_results[remaining.id].mark_skipped("Execution stopped due to failure")
-                        break
-
-            self._notify_status(node.id, node_result.status, node_result)
+                    self._skip_pending(node_results)
+                    break
 
         # Finalize run result
         run_result.node_results = list(node_results.values())
-        run_result.finished_at = datetime.utcnow()
+        run_result.finished_at = utcnow()
         run_result.overall_status = run_result.compute_overall_status()
         run_result.summary = run_result.generate_summary()
 
@@ -471,13 +376,126 @@ class WorkflowExecutor:
             workflow_id=workflow.id,
             overall_status=run_result.overall_status.value,
             total_nodes=len(workflow.nodes),
-            completed_nodes=len(completed_nodes),
-            failed_nodes=len(failed_nodes),
-            skipped_nodes=len(skipped_by_condition),
-            duration_seconds=(run_result.finished_at - run_result.started_at).total_seconds(),
+            completed_nodes=len(state.completed),
+            failed_nodes=len(state.failed),
+            skipped_nodes=run_result.skipped_count,
+            duration_seconds=run_result.duration_seconds,
         )
 
         return run_result
+
+    def _skip_reason(
+        self,
+        node: Node,
+        workflow: WorkflowGraph,
+        result: NodeResult,
+        state: _RunState,
+    ) -> str | None:
+        """Return why a node must not run, recording the skip in the run state."""
+        deps = workflow.get_dependencies(node.id)
+
+        evaluator = ConditionEvaluator(self._execution_context)
+        for edge in workflow.edges:
+            if (
+                edge.to_node_id == node.id
+                and edge.condition
+                and not evaluator.evaluate(edge.condition)
+            ):
+                state.skipped_by_condition.add(node.id)
+                return "Edge condition not met"
+
+        if deps and all(d in state.skipped_by_condition for d in deps):
+            state.skipped_by_condition.add(node.id)
+            return "All dependencies skipped by condition"
+
+        # continue_on_failure tolerates failures; it never bypasses an approval gate.
+        if any(d in state.unapproved for d in deps):
+            state.unapproved.add(node.id)
+            return "Dependency not approved"
+
+        if not node.continue_on_failure and any(d in state.blocking for d in deps):
+            state.blocking.add(node.id)
+            return (
+                "Dependency failed"
+                if any(d in state.failed for d in deps)
+                else ("Dependency skipped")
+            )
+
+        if (
+            node.requires_human_approval
+            and self.config.require_approval_for_dangerous
+            and not self.config.auto_approve
+        ):
+            if self.approval_callback is None:
+                result.status = ExecutionStatus.WAITING_APPROVAL
+                self._notify_status(node.id, ExecutionStatus.WAITING_APPROVAL, result)
+                state.unapproved.add(node.id)
+                return "No approval mechanism available"
+
+            if not self.approval_callback(node):
+                state.unapproved.add(node.id)
+                return "Human approval denied"
+
+        return None
+
+    def _passes_gates(
+        self,
+        node: Node,
+        workflow: WorkflowGraph,
+        result: NodeResult,
+        state: _RunState,
+    ) -> bool:
+        """Check whether a node may run, marking it skipped if it may not."""
+        reason = self._skip_reason(node, workflow, result, state)
+        if reason is None:
+            return True
+
+        result.mark_skipped(reason)
+        self._notify_status(node.id, ExecutionStatus.SKIPPED, result)
+        return False
+
+    async def _run_node(self, node: Node, result: NodeResult, state: _RunState) -> None:
+        """Run one node and record its outcome in the run state."""
+        self._notify_status(node.id, ExecutionStatus.RUNNING)
+        result.mark_started()
+
+        try:
+            if self.config.dry_run:
+                await self._dry_run_node(node, result)
+            else:
+                await self._execute_node(node, result)
+        except Exception as e:
+            result.mark_failed(str(e))
+
+        # _execute_node reports tool failures through the result rather than by
+        # raising, so the outcome has to be read from the result.
+        if result.status == ExecutionStatus.FAILED:
+            state.failed.add(node.id)
+            if not node.continue_on_failure:
+                state.blocking.add(node.id)
+            logger.error("node_execution_failed", node_id=node.id, error=result.error_message)
+        else:
+            state.completed.add(node.id)
+            self._execution_context[node.id] = result.outputs
+            logger.info(
+                "node_execution_completed",
+                node_id=node.id,
+                status=result.status.value,
+                duration_seconds=result.duration_seconds,
+            )
+
+        self._notify_status(node.id, result.status, result)
+
+    def _should_stop(self, nodes: Iterable[Node], state: _RunState) -> bool:
+        """Check whether any of the given nodes ended the run with a failure."""
+        return self.config.stop_on_failure and any(node.id in state.blocking for node in nodes)
+
+    @staticmethod
+    def _skip_pending(node_results: dict[str, NodeResult]) -> None:
+        """Mark every node that has not started as skipped."""
+        for result in node_results.values():
+            if result.status == ExecutionStatus.PENDING:
+                result.mark_skipped("Execution stopped due to failure")
 
     async def _execute_node(
         self,
@@ -486,22 +504,22 @@ class WorkflowExecutor:
     ) -> None:
         """Execute a single node."""
         # Get the tool
-        tool = self.tool_registry.get(node.tool)
+        tool, implied_params = self.tool_registry.resolve(node.tool)
 
         if tool is None:
             logger.error("tool_not_found", node_id=node.id, tool=node.tool)
             result.mark_failed(f"Tool not found: {node.tool}")
             return
 
-        # Build context from parent node outputs
-        deps = self._get_dependency_outputs(node.id)
+        # Tools read earlier results from the whole run, not only direct parents
+        deps = dict(self._execution_context)
 
         # Execute with timeout
         timeout = node.timeout_seconds or self.config.default_timeout_seconds
 
         try:
             tool_result = await asyncio.wait_for(
-                tool.execute(node.params, context=deps),
+                tool.execute({**implied_params, **node.params}, context=deps),
                 timeout=timeout,
             )
 
@@ -515,7 +533,7 @@ class WorkflowExecutor:
             else:
                 result.mark_failed(tool_result.error_message or "Tool execution failed")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result.mark_failed(f"Execution timed out after {timeout} seconds")
 
     async def _dry_run_node(
@@ -524,26 +542,28 @@ class WorkflowExecutor:
         result: NodeResult,
     ) -> None:
         """Simulate node execution for dry run."""
+        # A step that cannot run for real should not look fine in a rehearsal
+        if self.tool_registry.resolve(node.tool)[0] is None:
+            result.mark_failed(f"Tool not found: {node.tool}")
+            return
+
         # Just mark as success with mock outputs
         await asyncio.sleep(0.1)  # Simulate some work
 
-        result.mark_success({
-            "dry_run": True,
-            "node_id": node.id,
-            "tool": node.tool,
-            "params": node.params,
-        })
+        result.mark_success(
+            {
+                "dry_run": True,
+                "node_id": node.id,
+                "tool": node.tool,
+                "params": node.params,
+            }
+        )
         result.raw_output = f"[DRY RUN] Would execute {node.tool} with params: {node.params}"
-
-    def _get_dependency_outputs(self, node_id: str) -> dict[str, dict[str, Any]]:
-        """Get outputs from all nodes this node depends on."""
-        # This would use the workflow graph, but we track it in execution_context
-        return dict(self._execution_context)
 
     async def execute_parallel(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Execute a workflow graph with parallel node execution.
@@ -562,7 +582,7 @@ class WorkflowExecutor:
         run_result = WorkflowRunResult(
             workflow_id=workflow.id,
             goal_description=workflow.goal_description,
-            started_at=datetime.utcnow(),
+            started_at=utcnow(),
         )
 
         # Initialize execution context
@@ -584,121 +604,30 @@ class WorkflowExecutor:
                 levels[level] = []
             levels[level].append(node)
 
-        # Track status
-        completed_nodes: set[str] = set()
-        failed_nodes: set[str] = set()
-        skipped_nodes: set[str] = set()
+        state = _RunState()
+        semaphore = asyncio.Semaphore(self.config.max_concurrency)
 
-        # Build edge lookup for condition checking
-        edges_to_node: dict[str, list[Edge]] = {}
-        for edge in workflow.edges:
-            if edge.to_node_id not in edges_to_node:
-                edges_to_node[edge.to_node_id] = []
-            edges_to_node[edge.to_node_id].append(edge)
+        async def run_limited(node: Node) -> None:
+            async with semaphore:
+                await self._run_node(node, node_results[node.id], state)
 
         # Execute level by level
-        for level in sorted(levels.keys()):
-            nodes_at_level = levels[level]
+        for level in sorted(levels):
+            ready_nodes = [
+                node
+                for node in levels[level]
+                if self._passes_gates(node, workflow, node_results[node.id], state)
+            ]
 
-            # Filter nodes that are ready to execute
-            ready_nodes = []
-            for node in nodes_at_level:
-                node_result = node_results[node.id]
+            await asyncio.gather(*(run_limited(node) for node in ready_nodes))
 
-                # Check dependencies
-                deps = workflow.get_dependencies(node.id)
-                deps_failed = any(d in failed_nodes for d in deps)
-                deps_skipped = all(d in skipped_nodes for d in deps) if deps else False
-
-                if deps_failed and not node.continue_on_failure:
-                    node_result.mark_skipped("Dependency failed")
-                    skipped_nodes.add(node.id)
-                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                    continue
-
-                if deps_skipped:
-                    node_result.mark_skipped("All dependencies skipped")
-                    skipped_nodes.add(node.id)
-                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                    continue
-
-                # Check edge conditions
-                incoming_edges = edges_to_node.get(node.id, [])
-                conditions_met = True
-                if incoming_edges:
-                    evaluator = ConditionEvaluator(self._execution_context)
-                    for edge in incoming_edges:
-                        if edge.condition and not evaluator.evaluate(edge.condition):
-                            conditions_met = False
-                            break
-
-                if not conditions_met:
-                    node_result.mark_skipped("Edge condition not met")
-                    skipped_nodes.add(node.id)
-                    self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                    continue
-
-                # Check approval
-                if node.requires_human_approval and self.config.require_approval_for_dangerous:
-                    if not self.config.auto_approve:
-                        if self.approval_callback:
-                            if not self.approval_callback(node):
-                                node_result.mark_skipped("Approval denied")
-                                skipped_nodes.add(node.id)
-                                self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                                continue
-                        else:
-                            node_result.mark_skipped("No approval mechanism")
-                            skipped_nodes.add(node.id)
-                            self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
-                            continue
-
-                ready_nodes.append(node)
-
-            if not ready_nodes:
-                continue
-
-            # Execute ready nodes in parallel with concurrency limit
-            semaphore = asyncio.Semaphore(self.config.max_concurrency)
-
-            async def execute_with_semaphore(node: Node) -> None:
-                async with semaphore:
-                    node_result = node_results[node.id]
-                    self._notify_status(node.id, ExecutionStatus.RUNNING)
-                    node_result.mark_started()
-
-                    try:
-                        if self.config.dry_run:
-                            await self._dry_run_node(node, node_result)
-                        else:
-                            await self._execute_node(node, node_result)
-
-                        completed_nodes.add(node.id)
-                        self._execution_context[node.id] = node_result.outputs
-
-                    except Exception as e:
-                        node_result.mark_failed(str(e))
-                        failed_nodes.add(node.id)
-
-                    self._notify_status(node.id, node_result.status, node_result)
-
-            # Run all ready nodes concurrently
-            await asyncio.gather(*[execute_with_semaphore(node) for node in ready_nodes])
-
-            # Check if we should stop due to failure
-            if failed_nodes and self.config.stop_on_failure:
-                # Mark remaining nodes as skipped
-                for remaining_level in range(level + 1, max(levels.keys()) + 1):
-                    if remaining_level in levels:
-                        for node in levels[remaining_level]:
-                            if node.id not in completed_nodes and node.id not in failed_nodes:
-                                node_results[node.id].mark_skipped("Execution stopped due to failure")
-                                skipped_nodes.add(node.id)
+            if self._should_stop(ready_nodes, state):
+                self._skip_pending(node_results)
                 break
 
         # Finalize run result
         run_result.node_results = list(node_results.values())
-        run_result.finished_at = datetime.utcnow()
+        run_result.finished_at = utcnow()
         run_result.overall_status = run_result.compute_overall_status()
         run_result.summary = run_result.generate_summary()
 
@@ -746,13 +675,12 @@ class WorkflowExecutor:
     def execute_sync(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Synchronous wrapper for execute().
 
         Uses asyncio.run() to execute the async method in a new event loop.
-        Compatible with Python 3.11+ and nested async contexts.
 
         Args:
             workflow: The workflow to execute.
@@ -760,25 +688,17 @@ class WorkflowExecutor:
 
         Returns:
             WorkflowRunResult with all node results.
-        """
-        try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            # If we reach here, we're in an async context - this is an error
-            raise RuntimeError(
-                "execute_sync() cannot be called from an async context. "
-                "Use await execute() instead."
-            )
-        except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            pass
 
+        Raises:
+            RuntimeError: If called from inside a running event loop.
+        """
+        ensure_no_running_loop("execute_sync", "execute")
         return asyncio.run(self.execute(workflow, initial_context=initial_context))
 
     async def execute_single_node(
         self,
         node: Node,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> NodeResult:
         """
         Execute a single node independently.
@@ -829,8 +749,8 @@ class InteractiveExecutor(WorkflowExecutor):
     async def execute_interactive(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
-    ):
+        initial_context: dict[str, Any] | None = None,
+    ) -> AsyncIterator[tuple[Node, NodeResult]]:
         """
         Execute workflow interactively, yielding after each node.
 
@@ -841,37 +761,15 @@ class InteractiveExecutor(WorkflowExecutor):
         self._execution_context = dict(initial_context) if initial_context else {}
 
         execution_order = workflow.topological_sort()
-        completed_nodes: set[str] = set()
-        failed_nodes: set[str] = set()
+        state = _RunState()
 
         for node in execution_order:
             result = NodeResult(node_id=node.id)
 
-            # Check dependencies
-            deps = workflow.get_dependencies(node.id)
-            if any(d in failed_nodes for d in deps):
-                result.mark_skipped("Dependency failed")
-                yield node, result
-                continue
-
-            # Execute
-            result.mark_started()
-
-            try:
-                if self.config.dry_run:
-                    await self._dry_run_node(node, result)
-                else:
-                    await self._execute_node(node, result)
-
-                completed_nodes.add(node.id)
-                self._execution_context[node.id] = result.outputs
-
-            except Exception as e:
-                result.mark_failed(str(e))
-                failed_nodes.add(node.id)
+            if self._passes_gates(node, workflow, result, state):
+                await self._run_node(node, result, state)
 
             yield node, result
 
-            # Check if we should stop
-            if result.status == ExecutionStatus.FAILED and self.config.stop_on_failure:
+            if self._should_stop([node], state):
                 break

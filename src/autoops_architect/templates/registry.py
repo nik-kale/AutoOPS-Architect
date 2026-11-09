@@ -1,11 +1,33 @@
 """Template registry and template model definitions."""
 
+import builtins
+import re
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
+from autoops_architect.timeutils import utcnow
+
+_PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+def _substitute(value: Any, values: dict[str, Any]) -> Any:
+    """Replace {{name}} placeholders throughout a value, leaving unknown ones."""
+    if isinstance(value, dict):
+        return {key: _substitute(item, values) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_substitute(item, values) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    # A value that is only a placeholder takes the parameter's own type
+    whole = _PLACEHOLDER.fullmatch(value.strip())
+    if whole and whole[1] in values:
+        return values[whole[1]]
+
+    return _PLACEHOLDER.sub(lambda m: str(values.get(m[1], m[0])), value)
 
 
 class WorkflowTemplate(BaseModel):
@@ -17,65 +39,39 @@ class WorkflowTemplate(BaseModel):
     service names, parameters, and other dynamic values.
     """
 
-    id: str = Field(
-        ...,
-        description="Unique identifier for the template"
-    )
+    id: str = Field(..., description="Unique identifier for the template")
 
-    name: str = Field(
-        ...,
-        description="Human-readable template name"
-    )
+    name: str = Field(..., description="Human-readable template name")
 
-    description: str = Field(
-        ...,
-        description="Description of what this template is for"
-    )
+    description: str = Field(..., description="Description of what this template is for")
 
     category: str = Field(
         default="general",
-        description="Template category (error_investigation, latency, security, etc.)"
+        description="Template category (error_investigation, latency, security, etc.)",
     )
 
-    tags: list[str] = Field(
-        default_factory=list,
-        description="Tags for searching and filtering"
-    )
+    tags: list[str] = Field(default_factory=list, description="Tags for searching and filtering")
 
     parameters: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Template parameters with default values"
+        default_factory=dict, description="Template parameters with default values"
     )
 
-    nodes: list[Node] = Field(
-        ...,
-        description="Template nodes (may contain placeholders)"
-    )
+    nodes: list[Node] = Field(..., description="Template nodes (may contain placeholders)")
 
-    edges: list[Edge] = Field(
-        ...,
-        description="Template edges"
-    )
+    edges: list[Edge] = Field(..., description="Template edges")
 
-    author: Optional[str] = Field(
-        default=None,
-        description="Template author"
-    )
+    author: str | None = Field(default=None, description="Template author")
 
-    version: str = Field(
-        default="1.0",
-        description="Template version"
-    )
+    version: str = Field(default="1.0", description="Template version")
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When the template was created"
+        default_factory=utcnow, description="When the template was created"
     )
 
     def instantiate(
         self,
         goal_description: str,
-        service: Optional[str] = None,
+        service: str | None = None,
         **kwargs: Any,
     ) -> WorkflowGraph:
         """
@@ -97,31 +93,16 @@ class WorkflowTemplate(BaseModel):
             params["service"] = service
         params.update(kwargs)
 
+        # A parameter still set to its own placeholder has not been given a value
+        params = {key: value for key, value in params.items() if value != f"{{{{{key}}}}}"}
+        values = {"service": "unknown-service", **params}
+
         # Create nodes with substitutions
         instantiated_nodes = []
         for node in self.nodes:
             node_dict = node.model_dump()
-
-            # Substitute service in params
-            if "params" in node_dict:
-                for key, value in node_dict["params"].items():
-                    if isinstance(value, str) and "{{service}}" in value:
-                        node_dict["params"][key] = value.replace(
-                            "{{service}}", params.get("service", "unknown-service")
-                        )
-                    elif value == "{{service}}":
-                        node_dict["params"][key] = params.get("service", "unknown-service")
-
-            # Substitute in name and description
-            if "{{service}}" in node_dict.get("name", ""):
-                node_dict["name"] = node_dict["name"].replace(
-                    "{{service}}", params.get("service", "service")
-                )
-            if "{{service}}" in node_dict.get("description", ""):
-                node_dict["description"] = node_dict["description"].replace(
-                    "{{service}}", params.get("service", "service")
-                )
-
+            for field in ("name", "description", "params"):
+                node_dict[field] = _substitute(node_dict[field], values)
             instantiated_nodes.append(Node.model_validate(node_dict))
 
         # Create the workflow
@@ -134,7 +115,7 @@ class WorkflowTemplate(BaseModel):
             metadata={
                 "template_id": self.id,
                 "template_version": self.version,
-                "instantiated_at": datetime.utcnow().isoformat(),
+                "instantiated_at": utcnow().isoformat(),
                 "parameters": params,
             },
         )
@@ -160,11 +141,11 @@ class TemplateRegistry:
             raise ValueError(f"Template '{template.id}' already registered")
         self._templates[template.id] = template
 
-    def get(self, template_id: str) -> Optional[WorkflowTemplate]:
+    def get(self, template_id: str) -> WorkflowTemplate | None:
         """Get a template by ID."""
         return self._templates.get(template_id)
 
-    def list(self, category: Optional[str] = None) -> list[WorkflowTemplate]:
+    def list(self, category: str | None = None) -> list[WorkflowTemplate]:
         """
         List all templates, optionally filtered by category.
 
@@ -181,10 +162,10 @@ class TemplateRegistry:
 
     def search(
         self,
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        tags: Optional[list[str]] = None,
-    ) -> list[WorkflowTemplate]:
+        query: str | None = None,
+        category: str | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> builtins.list[WorkflowTemplate]:
         """
         Search templates by query, category, or tags.
 
@@ -202,24 +183,22 @@ class TemplateRegistry:
             results = [t for t in results if t.category == category]
 
         if tags:
-            tag_set = set(t.lower() for t in tags)
-            results = [
-                t for t in results
-                if any(tag.lower() in tag_set for tag in t.tags)
-            ]
+            tag_set = {t.lower() for t in tags}
+            results = [t for t in results if any(tag.lower() in tag_set for tag in t.tags)]
 
         if query:
             query_lower = query.lower()
             results = [
-                t for t in results
+                t
+                for t in results
                 if query_lower in t.name.lower() or query_lower in t.description.lower()
             ]
 
         return results
 
-    def list_categories(self) -> list[str]:
+    def list_categories(self) -> builtins.list[str]:
         """Get all unique categories."""
-        categories = set(t.category for t in self._templates.values())
+        categories = {t.category for t in self._templates.values()}
         return sorted(categories)
 
 
@@ -293,7 +272,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 2: Latency Investigation
         WorkflowTemplate(
             id="latency-investigation",
@@ -359,7 +337,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 3: Login/Auth Failures
         WorkflowTemplate(
             id="auth-failure-investigation",
@@ -421,7 +398,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 4: Database Connection Issues
         WorkflowTemplate(
             id="db-connection-investigation",
@@ -484,7 +460,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 5: Memory/Resource Issues
         WorkflowTemplate(
             id="resource-investigation",

@@ -1,18 +1,16 @@
 """Tests for data models."""
 
-import json
-
 import pytest
 from pydantic import ValidationError
 
-from autoops_architect.models.goal import Environment, Goal, Priority
-from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 from autoops_architect.models.execution import (
     ExecutionStatus,
     NodeResult,
     WorkflowRunResult,
 )
+from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.memory import MemoryEntry, WorkflowMemory
+from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 
 
 class TestGoal:
@@ -345,20 +343,24 @@ class TestWorkflowMemory:
     def test_workflow_memory_search(self):
         """Test searching workflow memory."""
         memory = WorkflowMemory()
-        memory.add_entry(MemoryEntry(
-            id="mem-001",
-            goal_description="5xx errors in checkout",
-            workflow_id="wf-001",
-            outcome_status="success",
-            keywords=["5xx", "checkout", "errors"],
-        ))
-        memory.add_entry(MemoryEntry(
-            id="mem-002",
-            goal_description="Slow login API",
-            workflow_id="wf-002",
-            outcome_status="success",
-            keywords=["slow", "login", "latency"],
-        ))
+        memory.add_entry(
+            MemoryEntry(
+                id="mem-001",
+                goal_description="5xx errors in checkout",
+                workflow_id="wf-001",
+                outcome_status="success",
+                keywords=["5xx", "checkout", "errors"],
+            )
+        )
+        memory.add_entry(
+            MemoryEntry(
+                id="mem-002",
+                goal_description="Slow login API",
+                workflow_id="wf-002",
+                outcome_status="success",
+                keywords=["slow", "login", "latency"],
+            )
+        )
 
         results = memory.search(keywords=["checkout", "5xx"], limit=5)
         assert len(results) >= 1

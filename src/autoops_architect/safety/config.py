@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -13,40 +12,27 @@ class ExecutionSafety(BaseModel):
 
     enable_remediation: bool = Field(
         default=False,
-        description="Whether to allow remediation actions (restarts, rollbacks, etc.)"
+        description="Whether to allow remediation actions (restarts, rollbacks, etc.)",
     )
 
     max_nodes_per_workflow: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum number of nodes allowed in a workflow"
+        default=20, ge=1, le=100, description="Maximum number of nodes allowed in a workflow"
     )
 
     default_timeout_seconds: int = Field(
-        default=60,
-        ge=1,
-        le=3600,
-        description="Default timeout for individual node execution"
+        default=60, ge=1, le=3600, description="Default timeout for individual node execution"
     )
 
     workflow_timeout_seconds: int = Field(
-        default=600,
-        ge=1,
-        le=36000,
-        description="Maximum time for entire workflow execution"
+        default=600, ge=1, le=36000, description="Maximum time for entire workflow execution"
     )
 
     max_concurrency: int = Field(
-        default=5,
-        ge=1,
-        le=50,
-        description="Maximum number of nodes to execute in parallel"
+        default=5, ge=1, le=50, description="Maximum number of nodes to execute in parallel"
     )
 
     dry_run_by_default: bool = Field(
-        default=False,
-        description="Whether to run in dry-run mode by default"
+        default=False, description="Whether to run in dry-run mode by default"
     )
 
 
@@ -59,17 +45,18 @@ class ToolSafety(BaseModel):
             "metric_query",
             "trace_collector",
             "analysis",
+            "log_analyzer",
             "summary",
             "echo",
         ],
-        description="Whitelist of allowed tools"
+        description="Whitelist of allowed tools",
     )
 
     blocked: list[str] = Field(
         default_factory=lambda: [
             "custom_script",
         ],
-        description="Blacklist of blocked tools"
+        description="Blacklist of blocked tools",
     )
 
     require_approval: list[str] = Field(
@@ -77,16 +64,14 @@ class ToolSafety(BaseModel):
             "autoRCA",
             "browserMission",
         ],
-        description="Tools that require approval before execution"
+        description="Tools that require approval before execution",
     )
 
     def is_allowed(self, tool_id: str) -> bool:
         """Check if a tool is allowed."""
         if tool_id in self.blocked:
             return False
-        if self.allowed and tool_id not in self.allowed:
-            return False
-        return True
+        return not (self.allowed and tool_id not in self.allowed)
 
     def requires_approval(self, tool_id: str) -> bool:
         """Check if a tool requires approval."""
@@ -107,7 +92,7 @@ class NodeTypeSafety(BaseModel):
             "mcp_action",
             "browser_mission",
         ],
-        description="Allowed node types"
+        description="Allowed node types",
     )
 
     blocked: list[str] = Field(
@@ -118,7 +103,7 @@ class NodeTypeSafety(BaseModel):
             "scale_action",
             "custom_script",
         ],
-        description="Blocked node types"
+        description="Blocked node types",
     )
 
     require_approval: list[str] = Field(
@@ -129,16 +114,14 @@ class NodeTypeSafety(BaseModel):
             "scale_action",
             "custom_script",
         ],
-        description="Node types that require approval"
+        description="Node types that require approval",
     )
 
     def is_allowed(self, node_type: str) -> bool:
         """Check if a node type is allowed."""
         if node_type in self.blocked:
             return False
-        if self.allowed and node_type not in self.allowed:
-            return False
-        return True
+        return not (self.allowed and node_type not in self.allowed)
 
     def requires_approval(self, node_type: str) -> bool:
         """Check if a node type requires approval."""
@@ -148,31 +131,20 @@ class NodeTypeSafety(BaseModel):
 class ApprovalSafety(BaseModel):
     """Approval workflow settings."""
 
-    enabled: bool = Field(
-        default=True,
-        description="Whether approval workflow is enabled"
-    )
+    enabled: bool = Field(default=True, description="Whether approval workflow is enabled")
 
     timeout_seconds: int = Field(
-        default=300,
-        ge=0,
-        le=86400,
-        description="Timeout for approval requests (0 = no timeout)"
+        default=300, ge=0, le=86400, description="Timeout for approval requests (0 = no timeout)"
     )
 
     require_for_production: bool = Field(
-        default=True,
-        description="Always require approval for production environments"
+        default=True, description="Always require approval for production environments"
     )
 
-    auto_approve_dry_run: bool = Field(
-        default=True,
-        description="Auto-approve in dry-run mode"
-    )
+    auto_approve_dry_run: bool = Field(default=True, description="Auto-approve in dry-run mode")
 
-    notify_channel: Optional[str] = Field(
-        default=None,
-        description="Channel to notify for approval requests"
+    notify_channel: str | None = Field(
+        default=None, description="Channel to notify for approval requests"
     )
 
 
@@ -180,13 +152,11 @@ class NetworkSafety(BaseModel):
     """Network-related safety settings."""
 
     allowed_hosts: list[str] = Field(
-        default_factory=list,
-        description="Allowed hosts (supports wildcards)"
+        default_factory=list, description="Allowed hosts (supports wildcards)"
     )
 
     blocked_hosts: list[str] = Field(
-        default_factory=list,
-        description="Blocked hosts (supports wildcards)"
+        default_factory=list, description="Blocked hosts (supports wildcards)"
     )
 
     def is_host_allowed(self, host: str) -> bool:
@@ -200,10 +170,7 @@ class NetworkSafety(BaseModel):
 
         # If whitelist is specified, host must match
         if self.allowed_hosts:
-            for pattern in self.allowed_hosts:
-                if fnmatch.fnmatch(host, pattern):
-                    return True
-            return False
+            return any(fnmatch.fnmatch(host, pattern) for pattern in self.allowed_hosts)
 
         return True
 
@@ -216,34 +183,24 @@ class SafetyConfig(BaseModel):
     what requires approval, and what is blocked entirely.
     """
 
-    version: str = Field(
-        default="1.0",
-        description="Config version"
-    )
+    version: str = Field(default="1.0", description="Config version")
 
     execution: ExecutionSafety = Field(
-        default_factory=ExecutionSafety,
-        description="Execution safety settings"
+        default_factory=ExecutionSafety, description="Execution safety settings"
     )
 
-    tools: ToolSafety = Field(
-        default_factory=ToolSafety,
-        description="Tool safety settings"
-    )
+    tools: ToolSafety = Field(default_factory=ToolSafety, description="Tool safety settings")
 
     node_types: NodeTypeSafety = Field(
-        default_factory=NodeTypeSafety,
-        description="Node type safety settings"
+        default_factory=NodeTypeSafety, description="Node type safety settings"
     )
 
     approval: ApprovalSafety = Field(
-        default_factory=ApprovalSafety,
-        description="Approval workflow settings"
+        default_factory=ApprovalSafety, description="Approval workflow settings"
     )
 
     network: NetworkSafety = Field(
-        default_factory=NetworkSafety,
-        description="Network safety settings"
+        default_factory=NetworkSafety, description="Network safety settings"
     )
 
     def to_yaml(self) -> str:
@@ -270,7 +227,7 @@ def get_default_safety_config() -> SafetyConfig:
     return SafetyConfig()
 
 
-def load_safety_config(path: Optional[str] = None) -> SafetyConfig:
+def load_safety_config(path: str | None = None) -> SafetyConfig:
     """
     Load safety configuration from file or environment.
 
@@ -306,6 +263,7 @@ def load_safety_config(path: Optional[str] = None) -> SafetyConfig:
             except Exception as e:
                 # Log warning but fall back to default
                 import logging
+
                 logging.getLogger(__name__).warning(
                     f"Failed to load safety config from {config_path}: {e}"
                 )
@@ -331,7 +289,7 @@ def _apply_env_overrides(config: SafetyConfig) -> SafetyConfig:
 
 
 # Global safety config instance (lazy loaded)
-_global_config: Optional[SafetyConfig] = None
+_global_config: SafetyConfig | None = None
 
 
 def get_safety_config() -> SafetyConfig:

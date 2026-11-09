@@ -1,9 +1,11 @@
 """Memory models for storing institutional knowledge and preferences."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
+
+from autoops_architect.timeutils import utcnow
 
 
 class MemoryEntry(BaseModel):
@@ -22,94 +24,50 @@ class MemoryEntry(BaseModel):
         ... )
     """
 
-    id: str = Field(
-        ...,
-        description="Unique identifier for this memory entry"
+    id: str = Field(..., description="Unique identifier for this memory entry")
+
+    goal_description: str = Field(..., description="The original goal that was addressed")
+
+    workflow_id: str = Field(..., description="ID of the workflow that was executed")
+
+    workflow_summary: str | None = Field(
+        default=None, description="Brief summary of what the workflow did"
     )
 
-    goal_description: str = Field(
-        ...,
-        description="The original goal that was addressed"
-    )
+    outcome_status: str = Field(..., description="Final status: success, failed, partial")
 
-    workflow_id: str = Field(
-        ...,
-        description="ID of the workflow that was executed"
-    )
-
-    workflow_summary: Optional[str] = Field(
-        default=None,
-        description="Brief summary of what the workflow did"
-    )
-
-    outcome_status: str = Field(
-        ...,
-        description="Final status: success, failed, partial"
-    )
-
-    outcome_summary: Optional[str] = Field(
-        default=None,
-        description="Summary of the outcome and lessons learned"
+    outcome_summary: str | None = Field(
+        default=None, description="Summary of the outcome and lessons learned"
     )
 
     keywords: list[str] = Field(
-        default_factory=list,
-        description="Keywords for retrieval and matching"
+        default_factory=list, description="Keywords for retrieval and matching"
     )
 
-    services: list[str] = Field(
-        default_factory=list,
-        description="Services that were involved"
+    services: list[str] = Field(default_factory=list, description="Services that were involved")
+
+    environment: str | None = Field(default=None, description="Environment where this was executed")
+
+    node_count: int = Field(default=0, ge=0, description="Number of nodes in the workflow")
+
+    success_count: int = Field(default=0, ge=0, description="Number of nodes that succeeded")
+
+    failed_count: int = Field(default=0, ge=0, description="Number of nodes that failed")
+
+    duration_seconds: float | None = Field(
+        default=None, description="Total execution duration in seconds"
     )
 
-    environment: Optional[str] = Field(
-        default=None,
-        description="Environment where this was executed"
-    )
+    created_at: datetime = Field(default_factory=utcnow, description="When this memory was created")
 
-    node_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of nodes in the workflow"
-    )
+    workflow_json: str | None = Field(default=None, description="Full workflow JSON for reference")
 
-    success_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of nodes that succeeded"
-    )
-
-    failed_count: int = Field(
-        default=0,
-        ge=0,
-        description="Number of nodes that failed"
-    )
-
-    duration_seconds: Optional[float] = Field(
-        default=None,
-        description="Total execution duration in seconds"
-    )
-
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When this memory was created"
-    )
-
-    workflow_json: Optional[str] = Field(
-        default=None,
-        description="Full workflow JSON for reference"
-    )
-
-    user_feedback: Optional[str] = Field(
-        default=None,
-        description="Optional user feedback about this execution"
+    user_feedback: str | None = Field(
+        default=None, description="Optional user feedback about this execution"
     )
 
     relevance_score: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="Computed relevance score when retrieved"
+        default=0.0, ge=0.0, le=1.0, description="Computed relevance score when retrieved"
     )
 
     def to_prompt_context(self) -> str:
@@ -143,31 +101,21 @@ class WorkflowMemory(BaseModel):
     This is the top-level structure for memory storage and retrieval.
     """
 
-    entries: list[MemoryEntry] = Field(
-        default_factory=list,
-        description="List of memory entries"
-    )
+    entries: list[MemoryEntry] = Field(default_factory=list, description="List of memory entries")
 
     last_updated: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When this memory was last updated"
+        default_factory=utcnow, description="When this memory was last updated"
     )
 
-    version: str = Field(
-        default="1.0",
-        description="Schema version"
-    )
+    version: str = Field(default="1.0", description="Schema version")
 
     def add_entry(self, entry: MemoryEntry) -> None:
         """Add a new memory entry."""
         self.entries.append(entry)
-        self.last_updated = datetime.utcnow()
+        self.last_updated = utcnow()
 
     def search(
-        self,
-        keywords: list[str],
-        limit: int = 5,
-        min_score: float = 0.1
+        self, keywords: list[str], limit: int = 5, min_score: float = 0.1
     ) -> list[MemoryEntry]:
         """
         Search for relevant memory entries by keywords.
@@ -181,10 +129,10 @@ class WorkflowMemory(BaseModel):
             List of matching entries sorted by relevance.
         """
         results: list[tuple[float, MemoryEntry]] = []
-        keyword_set = set(k.lower() for k in keywords)
+        keyword_set = {k.lower() for k in keywords}
 
         for entry in self.entries:
-            entry_keywords = set(k.lower() for k in entry.keywords)
+            entry_keywords = {k.lower() for k in entry.keywords}
             entry_keywords.update(s.lower() for s in entry.services)
 
             # Simple keyword overlap scoring
@@ -225,29 +173,16 @@ class UserPreference(BaseModel):
         ... )
     """
 
-    key: str = Field(
-        ...,
-        description="Preference key (dot-notation for namespacing)"
-    )
+    key: str = Field(..., description="Preference key (dot-notation for namespacing)")
 
-    value: Any = Field(
-        ...,
-        description="Preference value"
-    )
+    value: Any = Field(..., description="Preference value")
 
-    description: Optional[str] = Field(
-        default=None,
-        description="Human-readable description"
-    )
+    description: str | None = Field(default=None, description="Human-readable description")
 
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When this preference was set"
-    )
+    created_at: datetime = Field(default_factory=utcnow, description="When this preference was set")
 
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When this preference was last updated"
+        default_factory=utcnow, description="When this preference was last updated"
     )
 
 
@@ -255,16 +190,15 @@ class PreferenceStore(BaseModel):
     """Collection of user preferences."""
 
     preferences: dict[str, UserPreference] = Field(
-        default_factory=dict,
-        description="Preferences keyed by their key field"
+        default_factory=dict, description="Preferences keyed by their key field"
     )
 
-    def set(self, key: str, value: Any, description: Optional[str] = None) -> None:
+    def set(self, key: str, value: Any, description: str | None = None) -> None:
         """Set a preference value."""
         if key in self.preferences:
             pref = self.preferences[key]
             pref.value = value
-            pref.updated_at = datetime.utcnow()
+            pref.updated_at = utcnow()
             if description:
                 pref.description = description
         else:
@@ -287,7 +221,7 @@ class PreferenceStore(BaseModel):
             return True
         return False
 
-    def list_keys(self, prefix: Optional[str] = None) -> list[str]:
+    def list_keys(self, prefix: str | None = None) -> list[str]:
         """List all preference keys, optionally filtered by prefix."""
         keys = list(self.preferences.keys())
         if prefix:

@@ -5,36 +5,42 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from structlog.types import EventDict, Processor
 
 # Context variables for correlation IDs
-workflow_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+workflow_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "workflow_id", default=None
 )
-execution_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+execution_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "execution_id", default=None
 )
-node_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "node_id", default=None
-)
+node_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("node_id", default=None)
 
 
 # Patterns for sensitive data that should be redacted
 SENSITIVE_PATTERNS = [
-    (re.compile(r'(api[_-]?key["\s:=]+)[\w\-]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(password["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(token["\s:=]+)[\w\-\.]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(secret["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(authorization[:\s]+bearer\s+)[\w\-\.]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'sk-[a-zA-Z0-9]{20,}'), 'sk-***REDACTED***'),  # OpenAI keys
+    (re.compile(r'(api[_-]?key["\s:=]+)[\w\-]{20,}', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(password["\s:=]+)[^\s"]+', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(token["\s:=]+)[\w\-\.]{20,}', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(secret["\s:=]+)[^\s"]+', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r"(authorization[:\s]+bearer\s+)[\w\-\.]+", re.IGNORECASE), r"\1***REDACTED***"),
+    # OpenAI and Anthropic keys, including the sk-proj- and sk-ant- forms
+    (re.compile(r"sk-[a-zA-Z0-9_\-]{20,}"), "sk-***REDACTED***"),
 ]
+
+# Field names whose string values are secrets whatever they look like.
+SENSITIVE_FIELD_NAME = re.compile(
+    r"(^|[_\-])(api[_\-]?key|password|passwd|secret|token|authorization)$", re.IGNORECASE
+)
+
+REDACTED = "***REDACTED***"
 
 
 def add_correlation_ids(
-    logger: logging.Logger, method_name: str, event_dict: EventDict
+    _logger: logging.Logger, _method_name: str, event_dict: EventDict
 ) -> EventDict:
     """
     Add correlation IDs from context to log entries.
@@ -57,7 +63,7 @@ def add_correlation_ids(
 
 
 def redact_sensitive_data(
-    logger: logging.Logger, method_name: str, event_dict: EventDict
+    _logger: logging.Logger, _method_name: str, event_dict: EventDict
 ) -> EventDict:
     """
     Redact sensitive information from log messages.
@@ -65,25 +71,32 @@ def redact_sensitive_data(
     Scans the 'event' field and any string values in the event dict
     for patterns matching API keys, passwords, tokens, etc.
     """
-    # Redact the main event message
-    if "event" in event_dict and isinstance(event_dict["event"], str):
-        message = event_dict["event"]
-        for pattern, replacement in SENSITIVE_PATTERNS:
-            message = pattern.sub(replacement, message)
-        event_dict["event"] = message
+    return {key: _redact_field(key, value) for key, value in event_dict.items()}
 
-    # Redact string values in other fields
-    for key, value in event_dict.items():
-        if isinstance(value, str) and key != "event":
-            for pattern, replacement in SENSITIVE_PATTERNS:
-                value = pattern.sub(replacement, value)
-            event_dict[key] = value
 
-    return event_dict
+def _redact_text(text: str) -> str:
+    """Apply the sensitive-data patterns to a string."""
+    for pattern, replacement in SENSITIVE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _redact_field(key: Any, value: Any) -> Any:
+    """Redact a field value, descending into containers."""
+    if isinstance(value, str):
+        redacted = _redact_text(value)
+        if redacted == value and isinstance(key, str) and SENSITIVE_FIELD_NAME.search(key):
+            return REDACTED
+        return redacted
+    if isinstance(value, dict):
+        return {k: _redact_field(k, v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_redact_field(key, item) for item in value]
+    return value
 
 
 def configure_logging(
-    log_level: Optional[str] = None,
+    log_level: str | None = None,
     json_logs: bool = True,
     dev_mode: bool = False,
 ) -> None:
@@ -118,6 +131,8 @@ def configure_logging(
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
+        # Render tracebacks first so that redaction applies to their text as well
+        structlog.processors.format_exc_info,
         redact_sensitive_data,
     ]
 
@@ -132,7 +147,6 @@ def configure_logging(
     else:
         # Production mode: JSON output
         processors = shared_processors + [
-            structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ]
 
@@ -158,7 +172,7 @@ def configure_logging(
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """
     Get a structured logger instance.
 
@@ -172,7 +186,8 @@ def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
         >>> logger = get_logger(__name__)
         >>> logger.info("workflow_started", workflow_id="wf-123", node_count=5)
     """
-    return structlog.get_logger(name)
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    return logger
 
 
 class LogContext:
@@ -190,9 +205,9 @@ class LogContext:
 
     def __init__(
         self,
-        workflow_id: Optional[str] = None,
-        execution_id: Optional[str] = None,
-        node_id: Optional[str] = None,
+        workflow_id: str | None = None,
+        execution_id: str | None = None,
+        node_id: str | None = None,
     ) -> None:
         """
         Initialize log context.
@@ -223,13 +238,7 @@ class LogContext:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the context and restore previous correlation IDs."""
         for token in reversed(self._tokens):
-            try:
-                # Reset to previous value
-                if hasattr(token, "var") and hasattr(token, "old_value"):
-                    token.var.set(token.old_value)
-            except Exception:
-                # If reset fails, just continue
-                pass
+            token.var.reset(token)
         self._tokens.clear()
 
 
@@ -240,4 +249,3 @@ if not structlog.is_configured():
     dev_mode = dev_mode or (hasattr(sys.stdout, "isatty") and sys.stdout.isatty())
 
     configure_logging(dev_mode=dev_mode)
-

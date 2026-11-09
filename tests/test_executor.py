@@ -4,13 +4,19 @@ import pytest
 
 from autoops_architect.executor.engine import (
     ExecutorConfig,
-    WorkflowExecutor,
     InteractiveExecutor,
+    WorkflowExecutor,
 )
 from autoops_architect.models.execution import ExecutionStatus
-from autoops_architect.models.workflow import Node, NodeType, Edge, WorkflowGraph
+from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 from autoops_architect.tools.base import ToolRegistry
-from autoops_architect.tools.builtin import EchoTool, LogCollectorTool, SummaryTool, AnalysisTool
+from autoops_architect.tools.builtin import (
+    AnalysisTool,
+    EchoTool,
+    LogCollectorTool,
+    MetricQueryTool,
+    SummaryTool,
+)
 
 
 @pytest.fixture
@@ -21,6 +27,7 @@ def executor_registry():
     registry.register(LogCollectorTool())
     registry.register(SummaryTool())
     registry.register(AnalysisTool())
+    registry.register(MetricQueryTool())
     return registry
 
 
@@ -67,7 +74,7 @@ class TestWorkflowExecutor:
 
         assert result.workflow_id == sample_workflow.id
         assert len(result.node_results) == len(sample_workflow.nodes)
-        assert result.overall_status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED)
+        assert result.overall_status == ExecutionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_dry_run(self, sample_workflow, executor_registry):
@@ -95,7 +102,7 @@ class TestWorkflowExecutor:
         """Test execution with status callback."""
         status_updates = []
 
-        def callback(node_id, status, result=None):
+        def callback(node_id, status, _result=None):
             status_updates.append((node_id, status))
 
         executor = WorkflowExecutor(tool_registry=executor_registry)
@@ -116,8 +123,7 @@ class TestWorkflowExecutor:
         result = await executor.execute(parallel_workflow)
 
         assert len(result.node_results) == len(parallel_workflow.nodes)
-        # With current sequential execution, all should complete
-        assert result.success_count >= 3  # At least start, one branch, and merge
+        assert result.success_count == len(parallel_workflow.nodes)
 
     @pytest.mark.asyncio
     async def test_execute_with_missing_tool(self):
@@ -197,7 +203,7 @@ class TestWorkflowExecutor:
 
         # n2 should still execute because n1 has continue_on_failure
         n2_result = result.get_node_result("n2")
-        assert n2_result.status in (ExecutionStatus.SUCCESS, ExecutionStatus.RUNNING)
+        assert n2_result.status == ExecutionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_single_node(self, executor_registry):
@@ -260,7 +266,7 @@ class TestInteractiveExecutor:
         executor = InteractiveExecutor(tool_registry=executor_registry)
 
         executed_nodes = []
-        async for node, result in executor.execute_interactive(sample_workflow):
+        async for node, _result in executor.execute_interactive(sample_workflow):
             executed_nodes.append(node.id)
 
         assert len(executed_nodes) == len(sample_workflow.nodes)
@@ -272,7 +278,7 @@ class TestInteractiveExecutor:
         executor = InteractiveExecutor(config=config, tool_registry=executor_registry)
 
         executed_nodes = []
-        async for node, result in executor.execute_interactive(sample_workflow):
+        async for node, _result in executor.execute_interactive(sample_workflow):
             executed_nodes.append(node.id)
             if len(executed_nodes) >= 2:
                 break

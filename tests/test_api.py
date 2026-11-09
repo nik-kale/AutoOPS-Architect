@@ -1,10 +1,6 @@
 """Tests for the FastAPI application."""
 
 import pytest
-
-# Skip all tests if FastAPI is not installed
-pytest.importorskip("fastapi")
-
 from fastapi.testclient import TestClient
 
 from autoops_architect.api.app import create_app
@@ -91,7 +87,7 @@ class TestTemplatesAPI:
             params={
                 "goal_description": "Test goal",
                 "service": "test-service",
-            }
+            },
         )
         assert response.status_code == 200
         workflow = response.json()
@@ -125,7 +121,7 @@ class TestWorkflowsAPI:
                 "services": ["checkout-api"],
                 "environment": "production",
                 "use_template": template_id,
-            }
+            },
         )
         assert response.status_code == 200
         workflow = response.json()
@@ -147,7 +143,7 @@ class TestWorkflowsAPI:
             json={
                 "description": "Test goal for getting workflow",
                 "use_template": template_id,
-            }
+            },
         )
         workflow_id = response.json()["id"]
 
@@ -174,7 +170,7 @@ class TestWorkflowsAPI:
             json={
                 "description": "Test goal for update",
                 "use_template": template_id,
-            }
+            },
         )
         workflow_id = response.json()["id"]
 
@@ -183,7 +179,7 @@ class TestWorkflowsAPI:
             f"/api/v1/workflows/{workflow_id}",
             json={
                 "disabled_node_ids": ["some-node-id"],
-            }
+            },
         )
         assert response.status_code == 200
 
@@ -199,7 +195,7 @@ class TestWorkflowsAPI:
             json={
                 "description": "Test goal for deletion",
                 "use_template": template_id,
-            }
+            },
         )
         workflow_id = response.json()["id"]
 
@@ -268,14 +264,12 @@ class TestWorkflowExecution:
             json={
                 "description": "Test goal for execution",
                 "use_template": template_id,
-            }
+            },
         )
         workflow_id = response.json()["id"]
 
         # Execute the workflow (dry run)
-        response = client.post(
-            f"/api/v1/workflows/{workflow_id}/execute?dry_run=true"
-        )
+        response = client.post(f"/api/v1/workflows/{workflow_id}/execute?dry_run=true")
         assert response.status_code == 200
         execution = response.json()
         assert "execution_id" in execution
@@ -293,26 +287,20 @@ class TestWorkflowExecution:
             json={
                 "description": "Test goal for status check",
                 "use_template": template_id,
-            }
+            },
         )
         workflow_id = response.json()["id"]
 
-        response = client.post(
-            f"/api/v1/workflows/{workflow_id}/execute?dry_run=true"
-        )
+        response = client.post(f"/api/v1/workflows/{workflow_id}/execute?dry_run=true")
         execution_id = response.json()["execution_id"]
 
         # Get execution status
-        response = client.get(
-            f"/api/v1/workflows/{workflow_id}/execute/{execution_id}"
-        )
+        response = client.get(f"/api/v1/workflows/{workflow_id}/execute/{execution_id}")
         assert response.status_code == 200
         status = response.json()
         assert status["execution_id"] == execution_id
 
     def test_get_nonexistent_execution(self, client):
         """Test getting a non-existent execution."""
-        response = client.get(
-            "/api/v1/workflows/some-workflow/execute/nonexistent-execution"
-        )
+        response = client.get("/api/v1/workflows/some-workflow/execute/nonexistent-execution")
         assert response.status_code == 404

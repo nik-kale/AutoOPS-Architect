@@ -104,10 +104,12 @@ edges:
 
 | Type | Description | Common Tools |
 |------|-------------|--------------|
-| `service_restart` | Restart service | `shell` |
-| `config_update` | Update config | `shell` |
-| `rollback` | Rollback deployment | `shell` |
-| `scale_action` | Scale resources | `shell` |
+| `service_restart` | Restart service | your own tool |
+| `config_update` | Update config | your own tool |
+| `rollback` | Rollback deployment | your own tool |
+| `scale_action` | Scale resources | your own tool |
+
+No remediation tool ships with the package: register your own with the `ToolRegistry`.
 
 ### Utility
 
@@ -238,11 +240,14 @@ edges:
     condition: "status != 'error'"
 ```
 
+A condition that cannot be evaluated, for example comparing a missing value with a number, is treated as not met.
+
 ## Execution Behavior
 
 ### Dependencies
 
 - A node only executes when all its dependencies have completed
+- If a dependency fails, is denied approval, or is skipped because of either, the node is skipped too
 - Use edges to define execution order
 
 ### Failure Handling
@@ -256,6 +261,8 @@ nodes:
     continue_on_failure: true  # Workflow continues even if this fails
 ```
 
+Set `continue_on_failure` on a later step, such as cleanup, to run it after a dependency has failed. It does not override approval gates.
+
 ### Human Approval
 
 ```yaml
@@ -263,8 +270,8 @@ nodes:
   - id: restart
     name: Restart service
     type: service_restart
-    tool: shell
-    requires_human_approval: true  # Execution pauses here
+    tool: my_restart_tool
+    requires_human_approval: true  # Skipped unless approved
 ```
 
 ### Timeouts

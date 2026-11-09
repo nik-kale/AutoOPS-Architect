@@ -1,17 +1,17 @@
 """Workflow-related API routes."""
 
 import asyncio
-import os
+import contextlib
 import uuid
-from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import (
     EdgeResponse,
-    ExecutionRequest,
     ExecutionResponse,
     ExecutionStatus,
     GoalRequest,
@@ -20,29 +20,22 @@ from autoops_architect.api.models import (
     WorkflowResponse,
     WorkflowUpdateRequest,
 )
-from autoops_architect.executor.engine import WorkflowExecutor
-from autoops_architect.models.execution import NodeStatus
+from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
+from autoops_architect.models.execution import ExecutionStatus as NodeExecutionStatus
+from autoops_architect.models.execution import NodeResult
 from autoops_architect.models.goal import Environment, Goal, Priority
-from autoops_architect.models.workflow import WorkflowGraph
+from autoops_architect.models.workflow import APPROVAL_REQUIRED_TYPES, WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
-from autoops_architect.tools import get_default_tools
+from autoops_architect.timeutils import utcnow
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
-# Check if authentication is enabled
-AUTH_ENABLED = os.getenv("AUTOOPS_AUTH_ENABLED", "false").lower() == "true"
-
-# Optional authentication dependency
-def get_auth_dependency():
-    """Get authentication dependency if auth is enabled."""
-    if AUTH_ENABLED:
-        from autoops_architect.api.auth import require_permission
-        return require_permission("execute:workflows")
-    else:
-        # No auth required - return a dummy dependency that always succeeds
-        async def no_auth():
-            return None
-        return no_auth
+_NODE_EVENT_TYPES = {
+    NodeExecutionStatus.RUNNING: "node_started",
+    NodeExecutionStatus.SUCCESS: "node_completed",
+    NodeExecutionStatus.FAILED: "node_failed",
+    NodeExecutionStatus.SKIPPED: "node_skipped",
+}
 
 # In-memory storage for active workflows and executions
 # In production, this would be backed by a database
@@ -87,10 +80,17 @@ def _workflow_to_response(workflow: WorkflowGraph) -> WorkflowResponse:
     )
 
 
-@router.post("", response_model=WorkflowResponse)
+def _get_execution(workflow_id: str, execution_id: str) -> dict[str, Any]:
+    """Look up an execution, requiring that it belongs to the workflow in the URL."""
+    execution = _active_executions.get(execution_id)
+    if execution is None or execution["workflow_id"] != workflow_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return execution
+
+
+@router.post("", response_model=WorkflowResponse, dependencies=[requires("create:workflows")])
 async def create_workflow(
     request: GoalRequest,
-    _auth: Any = Depends(get_auth_dependency()),
 ) -> WorkflowResponse:
     """
     Generate a workflow from a natural language goal.
@@ -98,29 +98,25 @@ async def create_workflow(
     This endpoint accepts a goal description and generates a workflow DAG
     that can be reviewed and modified before execution.
 
-    Requires: execute:workflows permission (if auth enabled)
+    Requires: create:workflows permission (if auth enabled)
     """
     # Build the Goal object
-    environment = None
+    environment = Environment.UNKNOWN
     if request.environment:
-        try:
+        with contextlib.suppress(ValueError):
             environment = Environment(request.environment.lower())
-        except ValueError:
-            pass
 
-    priority = None
+    priority = Priority.UNKNOWN
     if request.priority:
-        try:
+        with contextlib.suppress(ValueError):
             priority = Priority(request.priority.lower())
-        except ValueError:
-            pass
 
     goal = Goal(
         description=request.description,
         services=request.services,
         environment=environment,
         priority=priority,
-        time_window=request.time_window,
+        context=f"Time window: {request.time_window}" if request.time_window else None,
     )
 
     # Create the architect and generate the workflow
@@ -139,12 +135,12 @@ async def create_workflow(
                 constraints=request.constraints,
             )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate workflow: {str(e)}",
-        )
+        ) from e
 
     # Store the workflow for later execution
     _active_workflows[workflow.id] = workflow
@@ -152,7 +148,9 @@ async def create_workflow(
     return _workflow_to_response(workflow)
 
 
-@router.get("/{workflow_id}", response_model=WorkflowResponse)
+@router.get(
+    "/{workflow_id}", response_model=WorkflowResponse, dependencies=[requires("read:workflows")]
+)
 async def get_workflow(workflow_id: str) -> WorkflowResponse:
     """Get a workflow by ID."""
     if workflow_id not in _active_workflows:
@@ -161,7 +159,9 @@ async def get_workflow(workflow_id: str) -> WorkflowResponse:
     return _workflow_to_response(_active_workflows[workflow_id])
 
 
-@router.patch("/{workflow_id}", response_model=WorkflowResponse)
+@router.patch(
+    "/{workflow_id}", response_model=WorkflowResponse, dependencies=[requires("create:workflows")]
+)
 async def update_workflow(
     workflow_id: str,
     request: WorkflowUpdateRequest,
@@ -185,11 +185,13 @@ async def update_workflow(
                 if "params" in updates:
                     node.params.update(updates["params"])
                 if "requires_human_approval" in updates:
-                    object.__setattr__(
-                        node,
-                        "requires_human_approval",
-                        updates["requires_human_approval"],
-                    )
+                    required = bool(updates["requires_human_approval"])
+                    if not required and node.type in APPROVAL_REQUIRED_TYPES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Node '{node.id}' ({node.type.value}) always requires approval",
+                        )
+                    node.requires_human_approval = required
 
     # Store disabled nodes in metadata
     if request.disabled_node_ids:
@@ -198,7 +200,7 @@ async def update_workflow(
     return _workflow_to_response(workflow)
 
 
-@router.delete("/{workflow_id}")
+@router.delete("/{workflow_id}", dependencies=[requires("create:workflows")])
 async def delete_workflow(workflow_id: str) -> dict[str, str]:
     """Delete a workflow."""
     if workflow_id not in _active_workflows:
@@ -208,7 +210,7 @@ async def delete_workflow(workflow_id: str) -> dict[str, str]:
     return {"status": "deleted", "workflow_id": workflow_id}
 
 
-@router.get("", response_model=list[WorkflowResponse])
+@router.get("", response_model=list[WorkflowResponse], dependencies=[requires("read:workflows")])
 async def list_workflows(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
@@ -219,12 +221,15 @@ async def list_workflows(
     return [_workflow_to_response(w) for w in workflows[offset : offset + limit]]
 
 
-@router.post("/{workflow_id}/execute", response_model=ExecutionResponse)
+@router.post(
+    "/{workflow_id}/execute",
+    response_model=ExecutionResponse,
+    dependencies=[requires("execute:workflows")],
+)
 async def execute_workflow(
     workflow_id: str,
     dry_run: bool = Query(default=False),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    _auth: Any = Depends(get_auth_dependency()),
 ) -> ExecutionResponse:
     """
     Execute a workflow.
@@ -241,7 +246,7 @@ async def execute_workflow(
     _active_executions[execution_id] = {
         "workflow_id": workflow_id,
         "status": ExecutionStatus.PENDING,
-        "started_at": datetime.utcnow(),
+        "started_at": utcnow(),
         "completed_at": None,
         "node_results": [],
         "events": [],
@@ -249,39 +254,31 @@ async def execute_workflow(
 
     # Start execution in background
     async def run_execution() -> None:
-        _active_executions[execution_id]["status"] = ExecutionStatus.RUNNING
-        tools = get_default_tools()
-        executor = WorkflowExecutor(tools=tools)
+        execution = _active_executions[execution_id]
+        execution["status"] = ExecutionStatus.RUNNING
 
-        disabled_nodes = workflow.metadata.get("disabled_nodes", [])
+        def on_status_change(
+            node_id: str, status: NodeExecutionStatus, _result: NodeResult | None = None
+        ) -> None:
+            if status not in _NODE_EVENT_TYPES:
+                return
 
-        def on_node_start(node_id: str) -> None:
             node = workflow.get_node(node_id)
-            event = NodeExecutionEvent(
-                event_type="node_started",
-                node_id=node_id,
-                node_name=node.name if node else node_id,
-                status="running",
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type=_NODE_EVENT_TYPES[status],
+                    node_id=node_id,
+                    node_name=node.name if node else node_id,
+                    status=status.value,
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
-
-        def on_node_complete(node_id: str, result: Any) -> None:
-            node = workflow.get_node(node_id)
-            event = NodeExecutionEvent(
-                event_type="node_completed",
-                node_id=node_id,
-                node_name=node.name if node else node_id,
-                status="completed",
-                result={"success": True},
-            )
-            _active_executions[execution_id]["events"].append(event)
-            _active_executions[execution_id]["node_results"].append(
-                {"node_id": node_id, "status": "success"}
-            )
+            if status != NodeExecutionStatus.RUNNING:
+                execution["node_results"].append({"node_id": node_id, "status": status.value})
 
         try:
             # Filter out disabled nodes
             filtered_workflow = workflow
+            disabled_nodes = workflow.metadata.get("disabled_nodes", [])
             if disabled_nodes:
                 filtered_workflow = WorkflowGraph(
                     id=workflow.id,
@@ -297,36 +294,35 @@ async def execute_workflow(
                     metadata=workflow.metadata,
                 )
 
-            result = await executor.execute(
-                workflow=filtered_workflow,
-                dry_run=dry_run,
-            )
+            executor = WorkflowExecutor(config=ExecutorConfig(dry_run=dry_run))
+            executor.add_status_callback(on_status_change)
+            result = await executor.execute(filtered_workflow)
 
-            _active_executions[execution_id]["status"] = (
+            execution["status"] = (
                 ExecutionStatus.COMPLETED
-                if result.overall_status.value == "success"
+                if result.overall_status == NodeExecutionStatus.SUCCESS
                 else ExecutionStatus.FAILED
             )
-            _active_executions[execution_id]["completed_at"] = datetime.utcnow()
-            _active_executions[execution_id]["summary"] = result.summary
-
-            # Add completion event
-            event = NodeExecutionEvent(
-                event_type="workflow_completed",
-                status=_active_executions[execution_id]["status"].value,
-                message=result.summary,
+            execution["completed_at"] = utcnow()
+            execution["summary"] = result.summary
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type="workflow_completed",
+                    status=execution["status"].value,
+                    message=result.summary,
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
 
         except Exception as e:
-            _active_executions[execution_id]["status"] = ExecutionStatus.FAILED
-            _active_executions[execution_id]["completed_at"] = datetime.utcnow()
-            event = NodeExecutionEvent(
-                event_type="workflow_failed",
-                status="failed",
-                message=str(e),
+            execution["status"] = ExecutionStatus.FAILED
+            execution["completed_at"] = utcnow()
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type="workflow_failed",
+                    status="failed",
+                    message=str(e),
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
 
     background_tasks.add_task(run_execution)
 
@@ -334,7 +330,7 @@ async def execute_workflow(
         execution_id=execution_id,
         workflow_id=workflow_id,
         status=ExecutionStatus.PENDING,
-        started_at=datetime.utcnow(),
+        started_at=utcnow(),
         completed_at=None,
         node_results=[],
         summary=None,
@@ -344,7 +340,9 @@ async def execute_workflow(
     )
 
 
-@router.get("/{workflow_id}/execute/{execution_id}/stream")
+@router.get(
+    "/{workflow_id}/execute/{execution_id}/stream", dependencies=[requires("read:workflows")]
+)
 async def stream_execution(
     workflow_id: str,
     execution_id: str,
@@ -354,8 +352,7 @@ async def stream_execution(
 
     Connect to this endpoint to receive real-time updates during workflow execution.
     """
-    if execution_id not in _active_executions:
-        raise HTTPException(status_code=404, detail="Execution not found")
+    _get_execution(workflow_id, execution_id)
 
     async def event_generator() -> AsyncGenerator[str, None]:
         last_event_count = 0
@@ -382,7 +379,7 @@ async def stream_execution(
 
             await asyncio.sleep(0.5)
 
-        yield "data: {\"event_type\": \"stream_end\"}\n\n"
+        yield 'data: {"event_type": "stream_end"}\n\n'
 
     return StreamingResponse(
         event_generator(),
@@ -394,23 +391,21 @@ async def stream_execution(
     )
 
 
-@router.get("/{workflow_id}/execute/{execution_id}", response_model=ExecutionResponse)
+@router.get(
+    "/{workflow_id}/execute/{execution_id}",
+    response_model=ExecutionResponse,
+    dependencies=[requires("read:workflows")],
+)
 async def get_execution_status(
     workflow_id: str,
     execution_id: str,
 ) -> ExecutionResponse:
     """Get the current status of a workflow execution."""
-    if execution_id not in _active_executions:
-        raise HTTPException(status_code=404, detail="Execution not found")
+    execution = _get_execution(workflow_id, execution_id)
 
-    execution = _active_executions[execution_id]
-
-    success_count = sum(
-        1 for r in execution["node_results"] if r.get("status") == "success"
-    )
-    failed_count = sum(
-        1 for r in execution["node_results"] if r.get("status") == "failed"
-    )
+    success_count = sum(1 for r in execution["node_results"] if r.get("status") == "success")
+    failed_count = sum(1 for r in execution["node_results"] if r.get("status") == "failed")
+    skipped_count = sum(1 for r in execution["node_results"] if r.get("status") == "skipped")
 
     return ExecutionResponse(
         execution_id=execution_id,
@@ -422,5 +417,5 @@ async def get_execution_status(
         summary=execution.get("summary"),
         success_count=success_count,
         failed_count=failed_count,
-        skipped_count=0,
+        skipped_count=skipped_count,
     )

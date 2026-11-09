@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from autoops_architect.api.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     Role,
-    Token,
     User,
     authenticate_user,
     create_access_token,
@@ -50,9 +49,7 @@ class APIKeyResponse(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
-) -> LoginResponse:
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> LoginResponse:
     """
     Login with username and password to get an access token.
 
@@ -76,7 +73,7 @@ async def login(
         access_token=access_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # In seconds
-        user=User(**user.dict()),
+        user=User(**user.model_dump()),
     )
 
 
@@ -120,7 +117,4 @@ async def list_permissions() -> dict[str, list[str]]:
     """
     from autoops_architect.api.auth import ROLE_PERMISSIONS
 
-    return {
-        role.value: list(perms) for role, perms in ROLE_PERMISSIONS.items()
-    }
-
+    return {role.value: list(perms) for role, perms in ROLE_PERMISSIONS.items()}

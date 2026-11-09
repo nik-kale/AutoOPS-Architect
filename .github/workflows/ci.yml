@@ -42,7 +42,7 @@ jobs:
         uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.11'
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -144,6 +144,7 @@ jobs:
     name: Test Installation
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11"]

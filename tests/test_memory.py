@@ -68,6 +68,7 @@ class TestJSONMemoryBackend:
 
     def test_create_backend(self, temp_json_path):
         """Test creating a JSON backend."""
+        os.unlink(temp_json_path)
         backend = JSONMemoryBackend(temp_json_path)
         assert backend.file_path.exists() is False  # Created on first save
 
@@ -193,7 +194,7 @@ class TestSQLiteMemoryBackend:
 
     def test_create_backend(self, temp_db_path):
         """Test creating a SQLite backend."""
-        backend = SQLiteMemoryBackend(temp_db_path)
+        SQLiteMemoryBackend(temp_db_path)
         assert os.path.exists(temp_db_path)
 
     def test_save_and_retrieve(self, temp_db_path, sample_run_data):

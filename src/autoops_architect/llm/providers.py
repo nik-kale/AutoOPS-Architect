@@ -2,18 +2,17 @@
 
 import json
 import os
-import re
-from typing import Any, Optional
+from typing import Any
 
 from autoops_architect.llm.base import (
+    LLMAuthenticationError,
     LLMClient,
     LLMConfig,
     LLMError,
     LLMMessage,
     LLMProvider,
-    LLMResponse,
-    LLMAuthenticationError,
     LLMRateLimitError,
+    LLMResponse,
     LLMTimeoutError,
 )
 
@@ -32,18 +31,18 @@ class OpenAIClient(LLMClient):
 
     def __init__(self, config: LLMConfig) -> None:
         super().__init__(config)
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Lazy initialization of the OpenAI client."""
         if self._client is None:
             try:
                 from openai import AsyncOpenAI
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
                     "OpenAI package not installed. "
                     "Install with: pip install autoops-architect[openai]"
-                )
+                ) from e
 
             api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
             if not api_key:
@@ -92,17 +91,17 @@ class OpenAIClient(LLMClient):
         except Exception as e:
             error_msg = str(e)
             if "rate_limit" in error_msg.lower():
-                raise LLMRateLimitError(error_msg, provider="openai")
+                raise LLMRateLimitError(error_msg, provider="openai") from e
             if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-                raise LLMAuthenticationError(error_msg, provider="openai")
+                raise LLMAuthenticationError(error_msg, provider="openai") from e
             if "timeout" in error_msg.lower():
-                raise LLMTimeoutError(error_msg, provider="openai")
-            raise LLMError(error_msg, provider="openai")
+                raise LLMTimeoutError(error_msg, provider="openai") from e
+            raise LLMError(error_msg, provider="openai") from e
 
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,  # noqa: ARG002 - LLMClient interface
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate a JSON completion using OpenAI API."""
@@ -118,13 +117,14 @@ class OpenAIClient(LLMClient):
             )
 
             content = response.choices[0].message.content or "{}"
-            return json.loads(content)
+            parsed: dict[str, Any] = json.loads(content)
+            return parsed
 
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in response: {e}")
+            raise ValueError(f"Invalid JSON in response: {e}") from e
         except Exception as e:
             error_msg = str(e)
-            raise LLMError(error_msg, provider="openai")
+            raise LLMError(error_msg, provider="openai") from e
 
 
 class AnthropicClient(LLMClient):
@@ -141,18 +141,18 @@ class AnthropicClient(LLMClient):
 
     def __init__(self, config: LLMConfig) -> None:
         super().__init__(config)
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Lazy initialization of the Anthropic client."""
         if self._client is None:
             try:
                 from anthropic import AsyncAnthropic
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
                     "Anthropic package not installed. "
                     "Install with: pip install autoops-architect[anthropic]"
-                )
+                ) from e
 
             api_key = self.config.api_key or os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
@@ -219,17 +219,17 @@ class AnthropicClient(LLMClient):
         except Exception as e:
             error_msg = str(e)
             if "rate_limit" in error_msg.lower():
-                raise LLMRateLimitError(error_msg, provider="anthropic")
+                raise LLMRateLimitError(error_msg, provider="anthropic") from e
             if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-                raise LLMAuthenticationError(error_msg, provider="anthropic")
+                raise LLMAuthenticationError(error_msg, provider="anthropic") from e
             if "timeout" in error_msg.lower():
-                raise LLMTimeoutError(error_msg, provider="anthropic")
-            raise LLMError(error_msg, provider="anthropic")
+                raise LLMTimeoutError(error_msg, provider="anthropic") from e
+            raise LLMError(error_msg, provider="anthropic") from e
 
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate a JSON completion using Anthropic API."""
@@ -258,16 +258,17 @@ class AnthropicClient(LLMClient):
             # Find the end of the opening fence
             first_newline = content.find("\n")
             if first_newline != -1:
-                content = content[first_newline + 1:]
+                content = content[first_newline + 1 :]
             # Remove closing fence
             if content.endswith("```"):
                 content = content[:-3]
             content = content.strip()
 
         try:
-            return json.loads(content)
+            parsed: dict[str, Any] = json.loads(content)
+            return parsed
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in response: {e}\nContent: {content[:500]}")
+            raise ValueError(f"Invalid JSON in response: {e}\nContent: {content[:500]}") from e
 
 
 class MockLLMClient(LLMClient):
@@ -281,8 +282,8 @@ class MockLLMClient(LLMClient):
     def __init__(
         self,
         config: LLMConfig,
-        responses: Optional[list[str]] = None,
-        json_responses: Optional[list[dict[str, Any]]] = None,
+        responses: list[str] | None = None,
+        json_responses: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(config)
         self.responses = responses or []
@@ -294,7 +295,7 @@ class MockLLMClient(LLMClient):
     async def complete(
         self,
         messages: list[LLMMessage],
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002 - LLMClient interface
     ) -> LLMResponse:
         """Return a mock response."""
         self.call_history.append(messages)
@@ -317,8 +318,8 @@ class MockLLMClient(LLMClient):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
-        **kwargs: Any,
+        schema: dict[str, Any] | None = None,  # noqa: ARG002 - LLMClient interface
+        **kwargs: Any,  # noqa: ARG002 - LLMClient interface
     ) -> dict[str, Any]:
         """Return a mock JSON response."""
         self.call_history.append(messages)
@@ -387,7 +388,7 @@ class MockLLMClient(LLMClient):
         self.call_history.clear()
 
 
-def get_llm_client(config: Optional[LLMConfig] = None) -> LLMClient:
+def get_llm_client(config: LLMConfig | None = None) -> LLMClient:
     """
     Factory function to get an LLM client based on configuration.
 

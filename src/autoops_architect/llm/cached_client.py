@@ -1,8 +1,8 @@
 """Cached LLM client wrapper for transparent response caching."""
 
-from typing import Any, Optional
+from typing import Any
 
-from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage, LLMResponse
+from autoops_architect.llm.base import LLMClient, LLMMessage, LLMResponse
 from autoops_architect.llm.cache import (
     CacheBackend,
     CacheConfig,
@@ -51,8 +51,8 @@ class CachedLLMClient(LLMClient):
     def __init__(
         self,
         client: LLMClient,
-        cache_config: Optional[CacheConfig] = None,
-        cache_backend: Optional[CacheBackend] = None,
+        cache_config: CacheConfig | None = None,
+        cache_backend: CacheBackend | None = None,
     ) -> None:
         """
         Initialize cached client wrapper.
@@ -71,6 +71,7 @@ class CachedLLMClient(LLMClient):
         self.cache_config = cache_config or CacheConfig(enabled=False)
         self.cache_enabled = self.cache_config.enabled
 
+        self.cache: CacheBackend | None
         if cache_backend:
             self.cache = cache_backend
         elif self.cache_enabled:
@@ -131,7 +132,7 @@ class CachedLLMClient(LLMClient):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         force_refresh: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -204,4 +205,3 @@ class CachedLLMClient(LLMClient):
         """Reset cache statistics counters."""
         self.cache_hits = 0
         self.cache_misses = 0
-

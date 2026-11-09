@@ -1,12 +1,13 @@
 """Command-line interface for AutoOps Architect."""
 
+import contextlib
 import json
-import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
@@ -16,7 +17,7 @@ from rich.tree import Tree
 from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
 from autoops_architect.llm.base import LLMConfig, LLMProvider
 from autoops_architect.memory.backend import get_memory_backend
-from autoops_architect.models.execution import ExecutionStatus
+from autoops_architect.models.execution import ExecutionStatus, NodeResult
 from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
@@ -54,27 +55,19 @@ def get_executor(dry_run: bool = False) -> WorkflowExecutor:
 @app.command()
 def plan(
     goal: str = typer.Argument(..., help="Natural language description of your goal"),
-    service: Optional[list[str]] = typer.Option(
-        None, "--service", "-s", help="Target service(s)"
-    ),
-    environment: Optional[str] = typer.Option(
+    service: list[str] | None = typer.Option(None, "--service", "-s", help="Target service(s)"),
+    environment: str | None = typer.Option(
         None, "--env", "-e", help="Environment (prod/staging/dev)"
     ),
-    priority: Optional[str] = typer.Option(
+    priority: str | None = typer.Option(
         None, "--priority", "-p", help="Priority (critical/high/medium/low)"
     ),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None, "--output", "-o", help="Output file for the workflow JSON"
     ),
-    yaml_output: bool = typer.Option(
-        False, "--yaml", help="Output as YAML instead of JSON"
-    ),
-    mock: bool = typer.Option(
-        False, "--mock", help="Use mock LLM (no API calls)"
-    ),
-    show_mermaid: bool = typer.Option(
-        False, "--mermaid", help="Show Mermaid diagram"
-    ),
+    yaml_output: bool = typer.Option(False, "--yaml", help="Output as YAML instead of JSON"),
+    mock: bool = typer.Option(False, "--mock", help="Use mock LLM (no API calls)"),
+    show_mermaid: bool = typer.Option(False, "--mermaid", help="Show Mermaid diagram"),
 ) -> None:
     """
     Generate a workflow plan from a natural language goal.
@@ -82,10 +75,12 @@ def plan(
     Example:
         autoops plan "Investigate elevated 5xx errors for the checkout service"
     """
-    console.print(Panel.fit(
-        f"[bold blue]Planning workflow for:[/]\n{goal}",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Planning workflow for:[/]\n{escape(goal)}",
+            title="AutoOps Architect",
+        )
+    )
 
     # Parse environment
     env = Environment.UNKNOWN
@@ -93,7 +88,7 @@ def plan(
         try:
             env = Environment(environment.lower())
         except ValueError:
-            console.print(f"[yellow]Unknown environment: {environment}, using 'unknown'[/]")
+            console.print(f"[yellow]Unknown environment: {escape(environment)}, using 'unknown'[/]")
 
     # Parse priority
     prio = Priority.UNKNOWN
@@ -101,7 +96,7 @@ def plan(
         try:
             prio = Priority(priority.lower())
         except ValueError:
-            console.print(f"[yellow]Unknown priority: {priority}, using 'unknown'[/]")
+            console.print(f"[yellow]Unknown priority: {escape(priority)}, using 'unknown'[/]")
 
     # Create Goal object
     goal_obj = Goal(
@@ -125,13 +120,13 @@ def plan(
             progress.update(task, completed=True)
         except Exception as e:
             progress.update(task, completed=True)
-            console.print(f"[red]Error generating workflow: {e}[/]")
-            raise typer.Exit(1)
+            console.print(f"[red]Error generating workflow: {escape(str(e))}[/]")
+            raise typer.Exit(1) from e
 
     # Display the workflow
     console.print()
-    console.print(f"[green]Generated workflow:[/] {workflow.name}")
-    console.print(f"[dim]ID: {workflow.id}[/]")
+    console.print(f"[green]Generated workflow:[/] {escape(workflow.name)}")
+    console.print(f"[dim]ID: {escape(workflow.id)}[/]")
     console.print(f"[dim]Nodes: {len(workflow.nodes)}, Edges: {len(workflow.edges)}[/]")
 
     # Show workflow tree
@@ -139,7 +134,7 @@ def plan(
     tree = Tree("[bold]Workflow Steps[/]")
     for node in workflow.topological_sort():
         icon = "🔧" if not node.requires_human_approval else "🛑"
-        tree.add(f"{icon} [{node.type.value}] {node.name}")
+        tree.add(f"{icon} \\[{node.type.value}] {escape(node.name)}")
     console.print(tree)
 
     # Show Mermaid diagram if requested
@@ -149,14 +144,11 @@ def plan(
         console.print(Syntax(workflow.to_mermaid(), "mermaid"))
 
     # Output to file or stdout
-    if yaml_output:
-        output_content = workflow.to_yaml()
-    else:
-        output_content = workflow.model_dump_json(indent=2)
+    output_content = workflow.to_yaml() if yaml_output else workflow.model_dump_json(indent=2)
 
     if output:
         output.write_text(output_content)
-        console.print(f"\n[green]Workflow saved to:[/] {output}")
+        console.print(f"\n[green]Workflow saved to:[/] {escape(str(output))}")
     else:
         console.print("\n[bold]Workflow JSON:[/]")
         if yaml_output:
@@ -183,7 +175,7 @@ def run(
     """
     # Load workflow
     if not workflow_file.exists():
-        console.print(f"[red]Workflow file not found: {workflow_file}[/]")
+        console.print(f"[red]Workflow file not found: {escape(str(workflow_file))}[/]")
         raise typer.Exit(1)
 
     content = workflow_file.read_text()
@@ -195,14 +187,16 @@ def run(
             data = json.loads(content)
             workflow = WorkflowGraph.model_validate(data)
     except Exception as e:
-        console.print(f"[red]Error parsing workflow: {e}[/]")
-        raise typer.Exit(1)
+        console.print(f"[red]Error parsing workflow: {escape(str(e))}[/]")
+        raise typer.Exit(1) from e
 
-    console.print(Panel.fit(
-        f"[bold blue]Executing workflow:[/] {workflow.name}\n"
-        f"[dim]ID: {workflow.id}[/]",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Executing workflow:[/] {escape(workflow.name)}\n"
+            f"[dim]ID: {escape(workflow.id)}[/]",
+            title="AutoOps Architect",
+        )
+    )
 
     if dry_run:
         console.print("[yellow]Running in dry-run mode (no tools will be executed)[/]")
@@ -212,7 +206,9 @@ def run(
     executor = WorkflowExecutor(config=config, tool_registry=create_default_registry())
 
     # Add progress callback
-    def on_status_change(node_id: str, status: ExecutionStatus, result=None):
+    def on_status_change(
+        node_id: str, status: ExecutionStatus, _result: NodeResult | None = None
+    ) -> None:
         icon = {
             ExecutionStatus.RUNNING: "⏳",
             ExecutionStatus.SUCCESS: "✅",
@@ -230,8 +226,8 @@ def run(
     try:
         result = executor.execute_sync(workflow)
     except Exception as e:
-        console.print(f"\n[red]Execution error: {e}[/]")
-        raise typer.Exit(1)
+        console.print(f"\n[red]Execution error: {escape(str(e))}[/]")
+        raise typer.Exit(1) from e
 
     # Display results
     console.print()
@@ -243,25 +239,31 @@ def run(
         ExecutionStatus.CANCELLED: "yellow",
     }.get(result.overall_status, "white")
 
-    console.print(Panel(
-        f"[{status_color}]{result.overall_status.value.upper()}[/]\n\n"
-        f"Nodes: {result.success_count} succeeded, "
-        f"{result.failed_count} failed, "
-        f"{result.skipped_count} skipped\n"
-        f"Duration: {result.duration_seconds:.2f}s" if result.duration_seconds else "",
-        title="Execution Result",
-    ))
+    duration = f"\nDuration: {result.duration_seconds:.2f}s" if result.duration_seconds else ""
+    console.print(
+        Panel(
+            f"[{status_color}]{result.overall_status.value.upper()}[/]\n\n"
+            f"Nodes: {result.success_count} succeeded, "
+            f"{result.failed_count} failed, "
+            f"{result.skipped_count} skipped"
+            f"{duration}",
+            title="Execution Result",
+        )
+    )
 
     # Show detailed results
     if result.failed_count > 0:
         console.print("\n[red bold]Failed Nodes:[/]")
         for node_result in result.node_results:
             if node_result.status == ExecutionStatus.FAILED:
-                console.print(f"  - {node_result.node_id}: {node_result.error_message}")
+                console.print(
+                    f"  - {node_result.node_id}: {escape(node_result.error_message or '')}"
+                )
 
     # Save to memory
     memory = get_memory_backend()
-    goal = Goal(description=workflow.goal_description)
+    # model_construct: a workflow file's goal need not meet the planner's length rule
+    goal = Goal.model_construct(description=workflow.goal_description)
     entry_id = memory.save_workflow_run(goal, workflow, result)
     console.print(f"\n[dim]Saved to memory: {entry_id}[/]")
 
@@ -269,18 +271,12 @@ def run(
 @app.command("plan-and-run")
 def plan_and_run(
     goal: str = typer.Argument(..., help="Natural language description of your goal"),
-    service: Optional[list[str]] = typer.Option(
-        None, "--service", "-s", help="Target service(s)"
-    ),
-    environment: Optional[str] = typer.Option(
+    service: list[str] | None = typer.Option(None, "--service", "-s", help="Target service(s)"),
+    environment: str | None = typer.Option(
         None, "--env", "-e", help="Environment (prod/staging/dev)"
     ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", "-n", help="Simulate execution"
-    ),
-    mock: bool = typer.Option(
-        False, "--mock", help="Use mock LLM"
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Simulate execution"),
+    mock: bool = typer.Option(False, "--mock", help="Use mock LLM"),
 ) -> None:
     """
     Plan and execute a workflow in one step.
@@ -288,18 +284,18 @@ def plan_and_run(
     Example:
         autoops plan-and-run "Check why login API is slow" --service auth-api
     """
-    console.print(Panel.fit(
-        f"[bold blue]Goal:[/] {goal}",
-        title="AutoOps Architect - Plan & Run",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Goal:[/] {escape(goal)}",
+            title="AutoOps Architect - Plan & Run",
+        )
+    )
 
     # Parse environment
     env = Environment.UNKNOWN
     if environment:
-        try:
+        with contextlib.suppress(ValueError):
             env = Environment(environment.lower())
-        except ValueError:
-            pass
 
     # Create Goal
     goal_obj = Goal(
@@ -323,15 +319,15 @@ def plan_and_run(
             progress.update(task, completed=True)
         except Exception as e:
             progress.update(task, completed=True)
-            console.print(f"[red]Error: {e}[/]")
-            raise typer.Exit(1)
+            console.print(f"[red]Error: {escape(str(e))}[/]")
+            raise typer.Exit(1) from e
 
-    console.print(f"\n[green]Generated:[/] {workflow.name} ({len(workflow.nodes)} steps)")
+    console.print(f"\n[green]Generated:[/] {escape(workflow.name)} ({len(workflow.nodes)} steps)")
 
     # Show steps
     console.print("\n[bold]Planned Steps:[/]")
     for i, node in enumerate(workflow.topological_sort(), 1):
-        console.print(f"  {i}. {node.name}")
+        console.print(f"  {i}. {escape(node.name)}")
 
     console.print()
 
@@ -342,9 +338,11 @@ def plan_and_run(
     console.print("[bold]Executing...[/]")
     executor = get_executor(dry_run=dry_run)
 
-    def on_status(node_id: str, status: ExecutionStatus, result=None):
-        icon = "✅" if status == ExecutionStatus.SUCCESS else (
-            "❌" if status == ExecutionStatus.FAILED else "⏳"
+    def on_status(node_id: str, status: ExecutionStatus, _result: NodeResult | None = None) -> None:
+        icon = (
+            "✅"
+            if status == ExecutionStatus.SUCCESS
+            else ("❌" if status == ExecutionStatus.FAILED else "⏳")
         )
         if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
             console.print(f"  {icon} {node_id}")
@@ -368,7 +366,7 @@ def plan_and_run(
 @app.command()
 def history(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of entries to show"),
-    search: Optional[str] = typer.Option(None, "--search", "-q", help="Search keywords"),
+    search: str | None = typer.Option(None, "--search", "-q", help="Search keywords"),
 ) -> None:
     """
     Show workflow execution history.
@@ -381,7 +379,7 @@ def history(
     if search:
         keywords = search.split()
         entries = memory.search(keywords=keywords, limit=limit)
-        console.print(f"[bold]Search results for:[/] {search}\n")
+        console.print(f"[bold]Search results for:[/] {escape(search)}\n")
     else:
         entries = memory.list_entries(limit=limit)
         console.print("[bold]Recent workflow runs:[/]\n")
@@ -402,7 +400,8 @@ def history(
         status_style = "green" if entry.outcome_status == "success" else "red"
         table.add_row(
             entry.id[:12],
-            entry.goal_description[:40] + ("..." if len(entry.goal_description) > 40 else ""),
+            escape(entry.goal_description[:40])
+            + ("..." if len(entry.goal_description) > 40 else ""),
             f"[{status_style}]{entry.outcome_status}[/]",
             f"{entry.success_count}/{entry.node_count}",
             entry.created_at.strftime("%Y-%m-%d %H:%M"),
@@ -452,7 +451,7 @@ def validate(
         autoops validate workflow.json
     """
     if not workflow_file.exists():
-        console.print(f"[red]File not found: {workflow_file}[/]")
+        console.print(f"[red]File not found: {escape(str(workflow_file))}[/]")
         raise typer.Exit(1)
 
     content = workflow_file.read_text()
@@ -464,7 +463,7 @@ def validate(
             data = json.loads(content)
             workflow = WorkflowGraph.model_validate(data)
 
-        console.print(f"[green]Valid workflow:[/] {workflow.name}")
+        console.print(f"[green]Valid workflow:[/] {escape(workflow.name)}")
         console.print(f"  Nodes: {len(workflow.nodes)}")
         console.print(f"  Edges: {len(workflow.edges)}")
 
@@ -475,13 +474,13 @@ def validate(
         if issues:
             console.print("\n[yellow]Warnings:[/]")
             for issue in issues:
-                console.print(f"  - {issue}")
+                console.print(f"  - {escape(issue)}")
         else:
             console.print("\n[green]No issues found.[/]")
 
     except Exception as e:
-        console.print(f"[red]Validation failed: {e}[/]")
-        raise typer.Exit(1)
+        console.print(f"[red]Validation failed: {escape(str(e))}[/]")
+        raise typer.Exit(1) from e
 
 
 # Template commands subgroup
@@ -491,8 +490,10 @@ app.add_typer(templates_app, name="templates")
 
 @templates_app.command("list")
 def templates_list(
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
-    source: Optional[str] = typer.Option(None, "--source", "-s", help="Filter by source (builtin/project/user)"),
+    category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
+    source: str | None = typer.Option(
+        None, "--source", "-s", help="Filter by source (builtin/project/user)"
+    ),
     show_source: bool = typer.Option(False, "--show-source", help="Show template source column"),
 ) -> None:
     """
@@ -510,7 +511,6 @@ def templates_list(
     """
     from autoops_architect.templates.loader import (
         TemplateDiscovery,
-        create_registry_with_file_templates,
     )
 
     discovery = TemplateDiscovery()
@@ -519,11 +519,12 @@ def templates_list(
         # Show templates from specific source only
         templates_by_source = discovery.list_templates_by_source()
         if source not in templates_by_source:
-            console.print(f"[red]Unknown source: {source}. Valid: builtin, project, user[/]")
+            console.print(
+                f"[red]Unknown source: {escape(source)}. Valid: builtin, project, user[/]"
+            )
             raise typer.Exit(1)
-        templates = [
-            {"template": t, "source": source}
-            for t in templates_by_source.get(source, [])
+        templates: list[dict[str, Any]] = [
+            {"template": t, "source": source} for t in templates_by_source.get(source, [])
         ]
     else:
         # Get all templates with source info
@@ -534,6 +535,7 @@ def templates_list(
 
     # Also include code-defined built-in templates
     from autoops_architect.templates.registry import get_builtin_templates
+
     code_templates = get_builtin_templates()
     code_ids = {t["template"].id for t in templates}
     for t in code_templates:
@@ -594,22 +596,25 @@ def templates_show(
     template = registry.get(template_id)
 
     if template is None:
-        console.print(f"[red]Template not found: {template_id}[/]")
+        console.print(f"[red]Template not found: {escape(template_id)}[/]")
         raise typer.Exit(1)
 
-    console.print(Panel.fit(
-        f"[bold]{template.name}[/]\n\n"
-        f"{template.description}\n\n"
-        f"[dim]Category:[/] {template.category}\n"
-        f"[dim]Tags:[/] {', '.join(template.tags)}\n"
-        f"[dim]Version:[/] {template.version}\n"
-        f"[dim]Author:[/] {template.author or 'N/A'}\n"
-        f"[dim]Nodes:[/] {len(template.nodes)}",
-        title=f"Template: {template_id}",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{escape(template.name)}[/]\n\n"
+            f"{escape(template.description)}\n\n"
+            f"[dim]Category:[/] {template.category}\n"
+            f"[dim]Tags:[/] {', '.join(template.tags)}\n"
+            f"[dim]Version:[/] {template.version}\n"
+            f"[dim]Author:[/] {template.author or 'N/A'}\n"
+            f"[dim]Nodes:[/] {len(template.nodes)}",
+            title=f"Template: {template_id}",
+        )
+    )
 
     if show_yaml:
         import yaml
+
         template_data = template.model_dump(mode="json")
         yaml_output = yaml.dump(template_data, default_flow_style=False, sort_keys=False)
         console.print("\n[bold]Template YAML:[/]")
@@ -619,14 +624,14 @@ def templates_show(
         console.print("\n[bold]Workflow Steps:[/]")
         tree = Tree("[bold]Nodes[/]")
         for node in template.nodes:
-            tree.add(f"[{node.type.value}] {node.name}")
+            tree.add(f"\\[{node.type.value}] {escape(node.name)}")
         console.print(tree)
 
         # Show edges
         if template.edges:
             console.print("\n[bold]Edges:[/]")
             for edge in template.edges:
-                condition = f" [dim](when: {edge.condition})[/]" if edge.condition else ""
+                condition = f" [dim](when: {escape(edge.condition)})[/]" if edge.condition else ""
                 console.print(f"  {edge.from_node_id} -> {edge.to_node_id}{condition}")
 
 
@@ -634,9 +639,11 @@ def templates_show(
 def templates_use(
     template_id: str = typer.Argument(..., help="Template ID to use"),
     goal: str = typer.Option(..., "--goal", "-g", help="Goal description"),
-    service: Optional[str] = typer.Option(None, "--service", "-s", help="Target service"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
-    run_workflow: bool = typer.Option(False, "--run", "-r", help="Execute the workflow after creating"),
+    service: str | None = typer.Option(None, "--service", "-s", help="Target service"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output file"),
+    run_workflow: bool = typer.Option(
+        False, "--run", "-r", help="Execute the workflow after creating"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run execution"),
 ) -> None:
     """
@@ -652,7 +659,7 @@ def templates_use(
     template = registry.get(template_id)
 
     if template is None:
-        console.print(f"[red]Template not found: {template_id}[/]")
+        console.print(f"[red]Template not found: {escape(template_id)}[/]")
         raise typer.Exit(1)
 
     # Create goal
@@ -667,14 +674,14 @@ def templates_use(
         service=service,
     )
 
-    console.print(f"[green]Created workflow from template:[/] {template.name}")
-    console.print(f"[dim]ID: {workflow.id}[/]")
+    console.print(f"[green]Created workflow from template:[/] {escape(template.name)}")
+    console.print(f"[dim]ID: {escape(workflow.id)}[/]")
     console.print(f"[dim]Nodes: {len(workflow.nodes)}[/]")
 
     # Show steps
     console.print("\n[bold]Workflow Steps:[/]")
     for i, node in enumerate(workflow.topological_sort(), 1):
-        console.print(f"  {i}. {node.name}")
+        console.print(f"  {i}. {escape(node.name)}")
 
     # Save to file if requested
     if output:
@@ -686,9 +693,13 @@ def templates_use(
         console.print("\n[bold]Executing workflow...[/]")
         executor = get_executor(dry_run=dry_run)
 
-        def on_status(node_id: str, status: ExecutionStatus, result=None):
-            icon = "✅" if status == ExecutionStatus.SUCCESS else (
-                "❌" if status == ExecutionStatus.FAILED else "⏳"
+        def on_status(
+            node_id: str, status: ExecutionStatus, _result: NodeResult | None = None
+        ) -> None:
+            icon = (
+                "✅"
+                if status == ExecutionStatus.SUCCESS
+                else ("❌" if status == ExecutionStatus.FAILED else "⏳")
             )
             if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
                 console.print(f"  {icon} {node_id}")
@@ -709,7 +720,9 @@ def templates_use(
 
 @templates_app.command("init")
 def templates_init(
-    location: str = typer.Option("project", "--location", "-l", help="Where to create: project or user"),
+    location: str = typer.Option(
+        "project", "--location", "-l", help="Where to create: project or user"
+    ),
 ) -> None:
     """
     Initialize a templates directory.
@@ -721,7 +734,6 @@ def templates_init(
         autoops templates init --location user
     """
     from autoops_architect.templates.loader import (
-        get_project_templates_dir,
         get_user_templates_dir,
     )
 
@@ -769,9 +781,9 @@ nodes:
     name: "Analyze collected data"
     description: "Analyze the gathered data"
     type: analysis
-    tool: analysis
+    tool: log_analyzer
     params:
-      analysis_type: "general"
+      analysis_type: "error_patterns"
 
   - id: summary
     name: "Generate summary"
@@ -816,7 +828,7 @@ def templates_export(
     template = registry.get(template_id)
 
     if template is None:
-        console.print(f"[red]Template not found: {template_id}[/]")
+        console.print(f"[red]Template not found: {escape(template_id)}[/]")
         raise typer.Exit(1)
 
     TemplateLoader.save_template(template, output, format=format)
@@ -838,12 +850,12 @@ def templates_validate(
     from autoops_architect.templates.loader import TemplateLoader
 
     if not template_file.exists():
-        console.print(f"[red]File not found: {template_file}[/]")
+        console.print(f"[red]File not found: {escape(str(template_file))}[/]")
         raise typer.Exit(1)
 
     try:
         template = TemplateLoader.load_from_file(template_file)
-        console.print(f"[green]Valid template:[/] {template.name}")
+        console.print(f"[green]Valid template:[/] {escape(template.name)}")
         console.print(f"  ID: {template.id}")
         console.print(f"  Category: {template.category}")
         console.print(f"  Nodes: {len(template.nodes)}")
@@ -862,13 +874,13 @@ def templates_validate(
         if issues:
             console.print("\n[yellow]Warnings:[/]")
             for issue in issues:
-                console.print(f"  - {issue}")
+                console.print(f"  - {escape(issue)}")
         else:
             console.print("\n[green]No issues found.[/]")
 
     except Exception as e:
-        console.print(f"[red]Validation failed: {e}[/]")
-        raise typer.Exit(1)
+        console.print(f"[red]Validation failed: {escape(str(e))}[/]")
+        raise typer.Exit(1) from e
 
 
 @templates_app.command("categories")
@@ -931,7 +943,8 @@ def memory_list(
         status_style = "green" if entry.outcome_status == "success" else "red"
         table.add_row(
             entry.id[:12],
-            entry.goal_description[:35] + ("..." if len(entry.goal_description) > 35 else ""),
+            escape(entry.goal_description[:35])
+            + ("..." if len(entry.goal_description) > 35 else ""),
             f"[{status_style}]{entry.outcome_status}[/]",
             f"{entry.success_count}/{entry.node_count}",
             entry.created_at.strftime("%Y-%m-%d %H:%M"),
@@ -961,24 +974,29 @@ def memory_show(
             break
 
     if entry is None:
-        console.print(f"[red]Memory entry not found: {entry_id}[/]")
+        console.print(f"[red]Memory entry not found: {escape(entry_id)}[/]")
         raise typer.Exit(1)
 
     status_color = "green" if entry.outcome_status == "success" else "red"
 
-    console.print(Panel(
-        f"[bold]Goal:[/] {entry.goal_description}\n\n"
-        f"[bold]Status:[/] [{status_color}]{entry.outcome_status}[/]\n"
-        f"[bold]Workflow ID:[/] {entry.workflow_id}\n"
-        f"[bold]Services:[/] {', '.join(entry.services) if entry.services else 'N/A'}\n"
-        f"[bold]Nodes:[/] {entry.success_count} succeeded / {entry.node_count} total\n"
-        f"[bold]Duration:[/] {entry.duration_seconds:.2f}s" if entry.duration_seconds else ""
-        f"\n[bold]Created:[/] {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
-        title=f"Memory Entry: {entry.id}",
-    ))
+    duration = (
+        f"[bold]Duration:[/] {entry.duration_seconds:.2f}s\n" if entry.duration_seconds else ""
+    )
+    console.print(
+        Panel(
+            f"[bold]Goal:[/] {escape(entry.goal_description)}\n\n"
+            f"[bold]Status:[/] [{status_color}]{entry.outcome_status}[/]\n"
+            f"[bold]Workflow ID:[/] {escape(entry.workflow_id)}\n"
+            f"[bold]Services:[/] {escape(', '.join(entry.services)) if entry.services else 'N/A'}\n"
+            f"[bold]Nodes:[/] {entry.success_count} succeeded / {entry.node_count} total\n"
+            f"{duration}"
+            f"[bold]Created:[/] {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            title=f"Memory Entry: {entry.id}",
+        )
+    )
 
     if entry.outcome_summary:
-        console.print(f"\n[bold]Summary:[/]\n{entry.outcome_summary}")
+        console.print(f"\n[bold]Summary:[/]\n{escape(entry.outcome_summary)}")
 
 
 @memory_app.command("delete")
@@ -1003,9 +1021,9 @@ def memory_delete(
     deleted = memory.delete_entry(entry_id)
 
     if deleted:
-        console.print(f"[green]Deleted memory entry: {entry_id}[/]")
+        console.print(f"[green]Deleted memory entry: {escape(entry_id)}[/]")
     else:
-        console.print(f"[red]Memory entry not found: {entry_id}[/]")
+        console.print(f"[red]Memory entry not found: {escape(entry_id)}[/]")
 
 
 @memory_app.command("search")
@@ -1035,15 +1053,15 @@ def memory_search(
         search_type = "Keyword"
 
     if not entries:
-        console.print(f"[dim]No results for: {query}[/]")
+        console.print(f"[dim]No results for: {escape(query)}[/]")
         return
 
-    console.print(f"[bold]{search_type} search results for:[/] {query}\n")
+    console.print(f"[bold]{search_type} search results for:[/] {escape(query)}\n")
 
     for entry in entries:
         status_color = "green" if entry.outcome_status == "success" else "red"
         console.print(f"[dim]{entry.id[:12]}[/] [{status_color}]{entry.outcome_status}[/]")
-        console.print(f"  {entry.goal_description[:60]}...")
+        console.print(f"  {escape(entry.goal_description[:60])}...")
         console.print(f"  [dim]Relevance: {entry.relevance_score:.0%}[/]")
         console.print()
 
@@ -1094,20 +1112,22 @@ def serve(
     """
     try:
         import uvicorn
-    except ImportError:
+    except ImportError as e:
         console.print(
             "[red]Web dependencies not installed.[/]\n"
             "Install with: pip install autoops-architect[web]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
-    console.print(Panel.fit(
-        f"[bold blue]Starting AutoOps Architect Web UI[/]\n\n"
-        f"Server: http://{host}:{port}\n"
-        f"API Docs: http://{host}:{port}/docs\n"
-        f"Debug: {'enabled' if debug else 'disabled'}",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Starting AutoOps Architect Web UI[/]\n\n"
+            f"Server: http://{host}:{port}\n"
+            f"API Docs: http://{host}:{port}/docs\n"
+            f"Debug: {'enabled' if debug else 'disabled'}",
+            title="AutoOps Architect",
+        )
+    )
 
     uvicorn.run(
         "autoops_architect.api.app:app",

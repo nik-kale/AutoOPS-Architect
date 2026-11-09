@@ -1,18 +1,18 @@
 """Integration tests for AutoOps Architect."""
 
-import pytest
-import tempfile
 import os
-from pathlib import Path
+import tempfile
 
-from autoops_architect.models.goal import Goal, Environment
-from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
-from autoops_architect.models.execution import ExecutionStatus
-from autoops_architect.executor.engine import WorkflowExecutor, ExecutorConfig
-from autoops_architect.tools.base import create_default_registry
+import pytest
+
+from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
 from autoops_architect.memory.backend import JSONMemoryBackend
+from autoops_architect.models.execution import ExecutionStatus
+from autoops_architect.models.goal import Environment, Goal
+from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
+from autoops_architect.templates.loader import TemplateLoader
 from autoops_architect.templates.registry import create_default_template_registry
-from autoops_architect.templates.loader import TemplateLoader, create_registry_with_file_templates
+from autoops_architect.tools.base import create_default_registry
 
 
 class TestEndToEndWorkflow:
@@ -216,6 +216,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )
@@ -238,6 +239,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )
@@ -259,6 +261,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )
@@ -267,12 +270,14 @@ class TestMemoryIntegration:
 
         # Semantic search with related query
         results = memory_backend.semantic_search(
-            query="server errors in shopping cart",
+            query="5xx errors in the checkout service",
             limit=10,
         )
 
-        # Should find related result (5xx errors in checkout)
-        assert len(results) >= 0  # May or may not match depending on threshold
+        assert [r.workflow_id for r in results] == [workflow.id]
+
+        # An unrelated query should not match it
+        assert memory_backend.semantic_search(query="printer toner levels", limit=10) == []
 
 
 class TestTemplateIntegration:
@@ -321,9 +326,7 @@ class TestTemplateIntegration:
 
     def test_load_yaml_template(self):
         """Test loading template from YAML file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("""
 id: test-template
 name: Test Template

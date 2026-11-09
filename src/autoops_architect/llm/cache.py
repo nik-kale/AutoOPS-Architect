@@ -1,12 +1,13 @@
 """LLM response caching to reduce costs and improve latency."""
 
+import contextlib
 import hashlib
 import json
 import os
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,38 +15,30 @@ from pydantic import BaseModel, Field
 class CacheConfig(BaseModel):
     """Configuration for LLM response caching."""
 
-    enabled: bool = Field(
-        default=False,
-        description="Whether caching is enabled"
-    )
+    enabled: bool = Field(default=False, description="Whether caching is enabled")
 
     backend: str = Field(
-        default="memory",
-        description="Cache backend: memory, filesystem, or redis"
+        default="memory", description="Cache backend: memory, filesystem, or redis"
     )
 
     ttl_seconds: int = Field(
         default=3600,
         ge=60,
         le=86400 * 7,
-        description="Time-to-live for cache entries in seconds (1 min to 7 days)"
+        description="Time-to-live for cache entries in seconds (1 min to 7 days)",
     )
 
     max_size: int = Field(
-        default=1000,
-        ge=10,
-        le=100000,
-        description="Maximum number of cached entries"
+        default=1000, ge=10, le=100000, description="Maximum number of cached entries"
     )
 
-    cache_dir: Optional[str] = Field(
+    cache_dir: str | None = Field(
         default=None,
-        description="Directory for filesystem cache (defaults to ~/.cache/autoops-architect)"
+        description="Directory for filesystem cache (defaults to ~/.cache/autoops-architect)",
     )
 
-    redis_url: Optional[str] = Field(
-        default=None,
-        description="Redis URL for redis backend (e.g., redis://localhost:6379/0)"
+    redis_url: str | None = Field(
+        default=None, description="Redis URL for redis backend (e.g., redis://localhost:6379/0)"
     )
 
 
@@ -70,7 +63,7 @@ class CacheBackend(ABC):
         self.config = config
 
     @abstractmethod
-    async def get(self, key: str) -> Optional[dict[str, Any]]:
+    async def get(self, key: str) -> dict[str, Any] | None:
         """
         Retrieve a value from cache.
 
@@ -83,7 +76,7 @@ class CacheBackend(ABC):
         pass
 
     @abstractmethod
-    async def set(self, key: str, value: dict[str, Any], ttl: Optional[int] = None) -> None:
+    async def set(self, key: str, value: dict[str, Any], ttl: int | None = None) -> None:
         """
         Store a value in cache.
 
@@ -122,7 +115,7 @@ class MemoryCacheBackend(CacheBackend):
         super().__init__(config)
         self._cache: dict[str, CacheEntry] = {}
 
-    async def get(self, key: str) -> Optional[dict[str, Any]]:
+    async def get(self, key: str) -> dict[str, Any] | None:
         """Retrieve from in-memory cache."""
         entry = self._cache.get(key)
         if entry is None:
@@ -134,7 +127,7 @@ class MemoryCacheBackend(CacheBackend):
 
         return entry.value
 
-    async def set(self, key: str, value: dict[str, Any], ttl: Optional[int] = None) -> None:
+    async def set(self, key: str, value: dict[str, Any], ttl: int | None = None) -> None:
         """Store in in-memory cache with LRU eviction."""
         # Evict oldest entries if at max size
         if len(self._cache) >= self.config.max_size:
@@ -176,14 +169,14 @@ class FilesystemCacheBackend(CacheBackend):
         """Get the file path for a cache key."""
         return self.cache_path / f"{key}.json"
 
-    async def get(self, key: str) -> Optional[dict[str, Any]]:
+    async def get(self, key: str) -> dict[str, Any] | None:
         """Retrieve from filesystem cache."""
         file_path = self._get_file_path(key)
         if not file_path.exists():
             return None
 
         try:
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 entry_data = json.load(f)
                 entry = CacheEntry(**entry_data)
 
@@ -192,12 +185,12 @@ class FilesystemCacheBackend(CacheBackend):
                 return None
 
             return entry.value
-        except (json.JSONDecodeError, OSError, KeyError):
-            # Corrupted cache file, delete it
+        except (ValueError, TypeError, OSError):
+            # Corrupted cache file (bad JSON or wrong shape), delete it
             await self.delete(key)
             return None
 
-    async def set(self, key: str, value: dict[str, Any], ttl: Optional[int] = None) -> None:
+    async def set(self, key: str, value: dict[str, Any], ttl: int | None = None) -> None:
         """Store in filesystem cache."""
         # Check cache size and evict if needed
         current_size = await self.size()
@@ -222,18 +215,14 @@ class FilesystemCacheBackend(CacheBackend):
     async def delete(self, key: str) -> None:
         """Delete from filesystem cache."""
         file_path = self._get_file_path(key)
-        try:
+        with contextlib.suppress(OSError):
             file_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     async def clear(self) -> None:
         """Clear all cache files."""
         for file_path in self.cache_path.glob("*.json"):
-            try:
+            with contextlib.suppress(OSError):
                 file_path.unlink()
-            except OSError:
-                pass
 
     async def size(self) -> int:
         """Get number of cache files."""
@@ -241,7 +230,7 @@ class FilesystemCacheBackend(CacheBackend):
 
     async def _evict_oldest(self) -> None:
         """Evict the oldest cache entry."""
-        oldest_file: Optional[Path] = None
+        oldest_file: Path | None = None
         oldest_time = float("inf")
 
         for file_path in self.cache_path.glob("*.json"):
@@ -262,38 +251,36 @@ class RedisCacheBackend(CacheBackend):
 
     def __init__(self, config: CacheConfig) -> None:
         super().__init__(config)
-        self._redis: Optional[Any] = None
+        self._redis: Any | None = None
 
     def _get_redis(self) -> Any:
         """Lazy initialization of Redis client."""
         if self._redis is None:
             try:
                 import redis.asyncio as redis
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
-                    "Redis package not installed. "
-                    "Install with: pip install redis"
-                )
+                    "Redis package not installed. Install with: pip install redis"
+                ) from e
 
-            redis_url = self.config.redis_url or os.getenv(
-                "REDIS_URL", "redis://localhost:6379/0"
-            )
+            redis_url = self.config.redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
             self._redis = redis.from_url(redis_url, decode_responses=True)
 
         return self._redis
 
-    async def get(self, key: str) -> Optional[dict[str, Any]]:
+    async def get(self, key: str) -> dict[str, Any] | None:
         """Retrieve from Redis cache."""
         redis_client = self._get_redis()
         try:
             data = await redis_client.get(f"autoops:llm:{key}")
             if data is None:
                 return None
-            return json.loads(data)
+            loaded: dict[str, Any] = json.loads(data)
+            return loaded
         except Exception:
             return None
 
-    async def set(self, key: str, value: dict[str, Any], ttl: Optional[int] = None) -> None:
+    async def set(self, key: str, value: dict[str, Any], ttl: int | None = None) -> None:
         """Store in Redis cache with TTL."""
         redis_client = self._get_redis()
         try:
@@ -310,10 +297,8 @@ class RedisCacheBackend(CacheBackend):
     async def delete(self, key: str) -> None:
         """Delete from Redis cache."""
         redis_client = self._get_redis()
-        try:
+        with contextlib.suppress(Exception):
             await redis_client.delete(f"autoops:llm:{key}")
-        except Exception:
-            pass
 
     async def clear(self) -> None:
         """Clear all LLM cache entries in Redis."""
@@ -404,4 +389,3 @@ def compute_cache_key(
     key_hash = hashlib.sha256(key_json.encode()).hexdigest()
 
     return key_hash
-

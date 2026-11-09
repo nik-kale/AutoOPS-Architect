@@ -1,29 +1,36 @@
 """Main FastAPI application for AutoOps Architect."""
 
+import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, Response
 
+from autoops_architect import __version__
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import HealthResponse
-from autoops_architect.api.routes import memory_router, templates_router, workflows_router
-from autoops_architect.api.routes.schedules import router as schedules_router
-
-# Package version
-__version__ = "0.1.0"
+from autoops_architect.api.routes import (
+    auth_router,
+    memory_router,
+    schedules_router,
+    templates_router,
+    webhooks_router,
+    workflows_router,
+)
+from autoops_architect.metrics import get_metrics
+from autoops_architect.scheduler import shutdown_scheduler
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup
     print("AutoOps Architect API starting...")
     yield
     # Shutdown
+    shutdown_scheduler()
     print("AutoOps Architect API shutting down...")
 
 
@@ -38,7 +45,8 @@ def create_app(
     Args:
         title: Application title.
         debug: Enable debug mode.
-        cors_origins: Allowed CORS origins.
+        cors_origins: Allowed CORS origins. Defaults to AUTOOPS_CORS_ORIGINS
+            (comma-separated), or none.
 
     Returns:
         Configured FastAPI application.
@@ -56,23 +64,38 @@ def create_app(
         redoc_url="/redoc",
     )
 
-    # Configure CORS
+    # The bundled UI is same-origin, so no cross-origin access is needed by default.
     if cors_origins is None:
-        cors_origins = ["*"]
+        configured = os.getenv("AUTOOPS_CORS_ORIGINS", "")
+        cors_origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # Include routers
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
     app.include_router(schedules_router, prefix="/api/v1")
+    app.include_router(webhooks_router, prefix="/api/v1")
+
+    # Metrics endpoint
+    @app.get(
+        "/metrics",
+        include_in_schema=False,
+        tags=["system"],
+        dependencies=[requires("read:health")],
+    )
+    async def metrics() -> Response:
+        """Prometheus metrics endpoint."""
+        content, content_type = get_metrics()
+        return Response(content=content, media_type=content_type)
 
     # Health check endpoint
     @app.get("/health", response_model=HealthResponse, tags=["system"])
@@ -516,9 +539,15 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
     </div>
 
     <script>
-        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' });
 
         const API_BASE = '/api/v1';
+        const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+        // Workflow text comes from goals, webhooks and LLM output: never trust it as HTML.
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
+        }
         let currentWorkflow = null;
         let selectedTemplate = null;
         let disabledNodes = new Set();
@@ -561,9 +590,9 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
 
                 const container = document.getElementById('templates-list');
                 container.innerHTML = templates.map(t => `
-                    <div class="template-card" data-id="${t.id}">
-                        <div class="template-name">${t.name}</div>
-                        <div class="template-desc">${t.description}</div>
+                    <div class="template-card" data-id="${esc(t.id)}">
+                        <div class="template-name">${esc(t.name)}</div>
+                        <div class="template-desc">${esc(t.description)}</div>
                     </div>
                 `).join('');
 
@@ -659,7 +688,10 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
         async function displayWorkflow(workflow) {
             // Render Mermaid diagram
             const container = document.getElementById('diagram-container');
-            container.innerHTML = `<pre class="mermaid">${workflow.mermaid_diagram}</pre>`;
+            const diagram = document.createElement('pre');
+            diagram.className = 'mermaid';
+            diagram.textContent = workflow.mermaid_diagram;
+            container.replaceChildren(diagram);
             await mermaid.run();
 
             // Display nodes
@@ -667,16 +699,16 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
             const nodeList = document.getElementById('node-list');
             nodeList.classList.remove('hidden');
             nodeList.innerHTML = workflow.nodes.map(node => `
-                <div class="node-item" data-id="${node.id}">
+                <div class="node-item" data-id="${esc(node.id)}">
                     <div class="node-header">
                         <span class="node-name">
-                            <input type="checkbox" class="node-toggle" data-id="${node.id}" checked>
-                            ${node.name}
+                            <input type="checkbox" class="node-toggle" data-id="${esc(node.id)}" checked>
+                            ${esc(node.name)}
                             ${node.requires_human_approval ? '<span class="approval-badge">Approval</span>' : ''}
                         </span>
-                        <span class="node-type">${node.type}</span>
+                        <span class="node-type">${esc(node.type)}</span>
                     </div>
-                    <div class="node-description">${node.description || 'No description'}</div>
+                    <div class="node-description">${esc(node.description || 'No description')}</div>
                 </div>
             `).join('');
 
@@ -721,7 +753,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                 });
 
                 const execution = await res.json();
-                log.innerHTML += `<div class="log-entry info">Execution started: ${execution.execution_id}</div>`;
+                log.innerHTML += `<div class="log-entry info">Execution started: ${esc(execution.execution_id)}</div>`;
 
                 // Stream events
                 const eventSource = new EventSource(
@@ -744,7 +776,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                         ? `[${data.event_type}] ${data.node_name}: ${data.status}`
                         : `[${data.event_type}] ${data.message || data.status}`;
 
-                    log.innerHTML += `<div class="log-entry ${className}">${message}</div>`;
+                    log.innerHTML += `<div class="log-entry ${className}">${esc(message)}</div>`;
                     log.scrollTop = log.scrollHeight;
                 };
 
@@ -754,7 +786,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                 };
 
             } catch (e) {
-                log.innerHTML += `<div class="log-entry error">Error: ${e.message}</div>`;
+                log.innerHTML += `<div class="log-entry error">Error: ${esc(e.message)}</div>`;
             }
         }
 

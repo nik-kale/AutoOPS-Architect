@@ -2,12 +2,10 @@
 
 import json
 import tempfile
-from pathlib import Path
-from typing import Any
 
 import pytest
 
-from autoops_architect.llm.base import LLMConfig, LLMMessage, LLMProvider, LLMResponse
+from autoops_architect.llm.base import LLMConfig, LLMMessage, LLMProvider
 from autoops_architect.llm.cache import (
     CacheConfig,
     CacheEntry,
@@ -135,7 +133,7 @@ class TestFilesystemCacheBackend:
             enabled=True,
             backend="filesystem",
             cache_dir=temp_dir,
-            max_size=5,
+            max_size=10,
         )
         return FilesystemCacheBackend(config)
 
@@ -334,9 +332,7 @@ class TestCachedLLMClient:
         assert stats["cache_misses"] == 1
         assert stats["hit_rate"] == pytest.approx(0.666, rel=0.01)
 
-    async def test_clear_cache(
-        self, cached_client: CachedLLMClient, mock_client: MockLLMClient
-    ) -> None:
+    async def test_clear_cache(self, cached_client: CachedLLMClient) -> None:
         """Test clearing the cache."""
         messages = [LLMMessage(role="user", content="Test")]
 
@@ -395,7 +391,6 @@ class TestArchitectCacheIntegration:
 
     async def test_planner_with_cache_enabled(self) -> None:
         """Test that planner uses cached client when configured."""
-        from autoops_architect.models.goal import Environment, Goal
         from autoops_architect.planner.architect import Architect, PlannerConfig
 
         cache_config = CacheConfig(enabled=True, backend="memory")
@@ -414,4 +409,3 @@ class TestArchitectCacheIntegration:
 
         # Check that the LLM client is not wrapped (it's the base client)
         assert not isinstance(architect.llm_client, CachedLLMClient)
-

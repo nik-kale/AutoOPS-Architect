@@ -9,11 +9,22 @@ These tools provide integration with:
 import asyncio
 import json
 import os
-from typing import Any, Optional
+import time
+from typing import Any
 
 import httpx
 
 from autoops_architect.tools.base import Tool, ToolConfig, ToolResult
+
+_TIMEFRAME_UNIT_SECONDS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def _timeframe_seconds(timeframe: str) -> int:
+    """Convert a timeframe such as '30m', '6h' or '1d' to seconds."""
+    unit = _TIMEFRAME_UNIT_SECONDS.get(timeframe[-1:])
+    if unit is None or not timeframe[:-1].isdigit():
+        raise ValueError(f"Unsupported timeframe: {timeframe!r}")
+    return int(timeframe[:-1]) * unit
 
 
 class AutoRCATool(Tool):
@@ -35,7 +46,7 @@ class AutoRCATool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.base_url = os.getenv("AUTORCA_URL", "http://localhost:8080")
         self.api_key = os.getenv("AUTORCA_API_KEY", "")
@@ -54,23 +65,17 @@ class AutoRCATool(Tool):
         return {
             "type": "object",
             "properties": {
-                "incident_id": {
-                    "type": "string",
-                    "description": "Incident identifier"
-                },
+                "incident_id": {"type": "string", "description": "Incident identifier"},
                 "symptoms": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of observed symptoms"
+                    "description": "List of observed symptoms",
                 },
-                "context": {
-                    "type": "object",
-                    "description": "Additional context for RCA"
-                },
+                "context": {"type": "object", "description": "Additional context for RCA"},
                 "mode": {
                     "type": "string",
                     "enum": ["quick", "thorough", "interactive"],
-                    "description": "Analysis mode (default: quick)"
+                    "description": "Analysis mode (default: quick)",
                 },
             },
         }
@@ -78,7 +83,7 @@ class AutoRCATool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Run root cause analysis."""
         if not self.config.enabled:
@@ -86,7 +91,7 @@ class AutoRCATool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "AutoRCA integration is disabled. "
-                              "Set AUTORCA_URL and enable the tool to use.",
+                    "Set AUTORCA_URL and enable the tool to use.",
                 },
                 raw_output="AutoRCA tool is disabled.",
             )
@@ -94,7 +99,7 @@ class AutoRCATool(Tool):
         # Extract symptoms from context if not provided
         symptoms = params.get("symptoms", [])
         if not symptoms and context:
-            for node_id, outputs in context.items():
+            for _node_id, outputs in context.items():
                 if isinstance(outputs, dict) and "findings" in outputs:
                     for finding in outputs["findings"]:
                         if isinstance(finding, dict):
@@ -129,7 +134,7 @@ class AutoRCATool(Tool):
                 raw_output=self._format_rca_result(mock_result),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"AutoRCA API error: {str(e)}",
                 raw_output=str(e),
             )
@@ -147,7 +152,8 @@ class AutoRCATool(Tool):
                 headers=headers,
             )
             response.raise_for_status()
-            return response.json()
+            analysis: dict[str, Any] = response.json()
+            return analysis
 
     def _extract_relevant_context(self, context: dict[str, Any]) -> dict[str, Any]:
         """Extract relevant information from workflow context."""
@@ -207,15 +213,17 @@ class AutoRCATool(Tool):
         if result.get("_mock"):
             lines.append(f"[MOCK MODE] {result.get('_message', '')}")
 
-        lines.extend([
-            "",
-            "Root Cause:",
-            f"  Category: {result['root_cause']['category']}",
-            f"  Description: {result['root_cause']['description']}",
-            f"  Confidence: {result['root_cause']['confidence']:.0%}",
-            "",
-            "Contributing Factors:",
-        ])
+        lines.extend(
+            [
+                "",
+                "Root Cause:",
+                f"  Category: {result['root_cause']['category']}",
+                f"  Description: {result['root_cause']['description']}",
+                f"  Confidence: {result['root_cause']['confidence']:.0%}",
+                "",
+                "Contributing Factors:",
+            ]
+        )
 
         for factor in result.get("contributing_factors", []):
             lines.append(f"  - {factor['factor']} ({factor['confidence']:.0%})")
@@ -255,7 +263,7 @@ class MCPTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.gateway_url = os.getenv("MCP_GATEWAY_URL", "http://localhost:3000")
         self.api_key = os.getenv("MCP_API_KEY", "")
@@ -276,16 +284,13 @@ class MCPTool(Tool):
             "properties": {
                 "server": {
                     "type": "string",
-                    "description": "MCP server name (e.g., 'jira', 'slack', 'pagerduty')"
+                    "description": "MCP server name (e.g., 'jira', 'slack', 'pagerduty')",
                 },
                 "action": {
                     "type": "string",
-                    "description": "Action to execute (e.g., 'create_issue', 'send_message')"
+                    "description": "Action to execute (e.g., 'create_issue', 'send_message')",
                 },
-                "arguments": {
-                    "type": "object",
-                    "description": "Action-specific arguments"
-                },
+                "arguments": {"type": "object", "description": "Action-specific arguments"},
             },
             "required": ["server", "action"],
         }
@@ -293,7 +298,7 @@ class MCPTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute an action via MCP Gateway."""
         if not self.config.enabled:
@@ -301,7 +306,7 @@ class MCPTool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "MCP Gateway integration is disabled. "
-                              "Set MCP_GATEWAY_URL and enable the tool to use.",
+                    "Set MCP_GATEWAY_URL and enable the tool to use.",
                 },
                 raw_output="MCP tool is disabled.",
             )
@@ -331,7 +336,7 @@ class MCPTool(Tool):
                 raw_output=f"[MOCK] Executed {server}:{action}",
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"MCP Gateway error: {str(e)}",
                 raw_output=str(e),
             )
@@ -365,13 +370,14 @@ class MCPTool(Tool):
                 headers=headers,
             )
             response.raise_for_status()
-            result = response.json()
+            result: dict[str, Any] = response.json()
 
             # Handle MCP protocol response
             if "error" in result:
                 raise Exception(result["error"].get("message", "Unknown MCP error"))
 
-            return result.get("result", result)
+            payload_result: dict[str, Any] = result.get("result", result)
+            return payload_result
 
     def _enrich_arguments(
         self,
@@ -385,7 +391,7 @@ class MCPTool(Tool):
         # If creating a ticket/issue, add summary from context
         if action in ("create_issue", "create_ticket") and "summary" not in enriched:
             # Look for RCA results or findings
-            for node_id, outputs in context.items():
+            for _node_id, outputs in context.items():
                 if isinstance(outputs, dict):
                     if "root_cause" in outputs:
                         enriched["summary"] = outputs["root_cause"].get(
@@ -406,14 +412,12 @@ class MCPTool(Tool):
         """Format workflow context as a notification message."""
         lines = ["AutoOps Workflow Update", ""]
 
-        for node_id, outputs in context.items():
+        for _node_id, outputs in context.items():
             if isinstance(outputs, dict):
                 if "summary" in outputs:
                     lines.append(f"- {outputs['summary']}")
                 elif "root_cause" in outputs:
-                    lines.append(
-                        f"- RCA: {outputs['root_cause'].get('description', 'N/A')}"
-                    )
+                    lines.append(f"- RCA: {outputs['root_cause'].get('description', 'N/A')}")
 
         return "\n".join(lines) if len(lines) > 2 else "Workflow completed"
 
@@ -537,29 +541,28 @@ class MCPTool(Tool):
     def _mock_github_action(
         self,
         action: str,
-        arguments: dict[str, Any],
+        _arguments: dict[str, Any],
     ) -> dict[str, Any]:
         """Generate mock GitHub action result."""
-        if action == "create_issue":
-            return {
+        responses: dict[str, dict[str, Any]] = {
+            "create_issue": {
                 "status": "success",
                 "issue_number": 42,
                 "issue_url": "https://github.com/org/repo/issues/42",
-            }
-        elif action == "create_pr":
-            return {
+            },
+            "create_pr": {
                 "status": "success",
                 "pr_number": 123,
                 "pr_url": "https://github.com/org/repo/pull/123",
-            }
-        elif action == "get_workflow_runs":
-            return {
+            },
+            "get_workflow_runs": {
                 "status": "success",
                 "runs": [
                     {"id": 1, "status": "completed", "conclusion": "success"},
                 ],
-            }
-        return {"status": "mock", "action": action}
+            },
+        }
+        return responses.get(action, {"status": "mock", "action": action})
 
     def _mock_opsgenie_action(
         self,
@@ -608,7 +611,7 @@ class BrowserMissionTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.agent_url = os.getenv("OPS_AGENT_DESKTOP_URL", "http://localhost:9090")
         self.api_key = os.getenv("OPS_AGENT_API_KEY", "")
@@ -629,28 +632,25 @@ class BrowserMissionTool(Tool):
             "properties": {
                 "mission_file": {
                     "type": "string",
-                    "description": "Path to mission definition file"
+                    "description": "Path to mission definition file",
                 },
                 "mission_type": {
                     "type": "string",
-                    "enum": ["health_check", "ui_test", "data_extraction", "session_replay", "custom"],
-                    "description": "Type of browser mission"
+                    "enum": [
+                        "health_check",
+                        "ui_test",
+                        "data_extraction",
+                        "session_replay",
+                        "custom",
+                    ],
+                    "description": "Type of browser mission",
                 },
-                "target_url": {
-                    "type": "string",
-                    "description": "Target URL for the mission"
-                },
-                "parameters": {
-                    "type": "object",
-                    "description": "Mission-specific parameters"
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Mission timeout in seconds"
-                },
+                "target_url": {"type": "string", "description": "Target URL for the mission"},
+                "parameters": {"type": "object", "description": "Mission-specific parameters"},
+                "timeout": {"type": "integer", "description": "Mission timeout in seconds"},
                 "capture_screenshots": {
                     "type": "boolean",
-                    "description": "Whether to capture screenshots during mission"
+                    "description": "Whether to capture screenshots during mission",
                 },
             },
         }
@@ -658,7 +658,7 @@ class BrowserMissionTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Execute a browser mission."""
         if not self.config.enabled:
@@ -666,7 +666,7 @@ class BrowserMissionTool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "Ops-Agent-Desktop integration is disabled. "
-                              "Set OPS_AGENT_DESKTOP_URL and enable the tool to use.",
+                    "Set OPS_AGENT_DESKTOP_URL and enable the tool to use.",
                 },
                 raw_output="Browser mission tool is disabled.",
             )
@@ -702,7 +702,7 @@ class BrowserMissionTool(Tool):
                 raw_output=self._format_mission_result(result),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"Browser mission error: {str(e)}",
                 raw_output=str(e),
             )
@@ -711,7 +711,7 @@ class BrowserMissionTool(Tool):
         self,
         mission_type: str,
         target_url: str,
-        mission_file: Optional[str],
+        mission_file: str | None,
         parameters: dict[str, Any],
         timeout: int,
         capture_screenshots: bool,
@@ -750,7 +750,7 @@ class BrowserMissionTool(Tool):
                     headers=headers,
                 )
                 status_response.raise_for_status()
-                status = status_response.json()
+                status: dict[str, Any] = status_response.json()
 
                 if status.get("status") in ("completed", "failed", "timeout"):
                     return status
@@ -867,7 +867,7 @@ class DatadogTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.api_key = os.getenv("DATADOG_API_KEY", "")
         self.app_key = os.getenv("DATADOG_APP_KEY", "")
@@ -890,20 +890,17 @@ class DatadogTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": ["query_metrics", "query_logs", "list_monitors", "get_events"],
-                    "description": "Action to perform"
+                    "description": "Action to perform",
                 },
                 "query": {
                     "type": "string",
-                    "description": "Query string (metric query or log query)"
+                    "description": "Query string (metric query or log query)",
                 },
                 "timeframe": {
                     "type": "string",
-                    "description": "Time window (e.g., '1h', '6h', '1d')"
+                    "description": "Time window (e.g., '1h', '6h', '1d')",
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results"
-                },
+                "limit": {"type": "integer", "description": "Maximum number of results"},
             },
             "required": ["action"],
         }
@@ -911,7 +908,7 @@ class DatadogTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Execute a Datadog query."""
         if not self.config.enabled:
@@ -926,7 +923,7 @@ class DatadogTool(Tool):
 
         if not self.api_key or not self.app_key:
             # Return mock data
-            result = self._generate_mock_result(action, query, timeframe)
+            result = self._generate_mock_result(action, query)
             result["_mock"] = True
             result["_message"] = "DATADOG_API_KEY or DATADOG_APP_KEY not set"
             return ToolResult.success(
@@ -941,7 +938,7 @@ class DatadogTool(Tool):
                 raw_output=json.dumps(result, indent=2),
             )
         except Exception as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 error_message=f"Datadog API error: {str(e)}",
                 raw_output=str(e),
             )
@@ -964,10 +961,8 @@ class DatadogTool(Tool):
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             if action == "query_metrics":
-                # Convert timeframe to timestamps
-                now = int(asyncio.get_event_loop().time())
-                hours = int(timeframe.rstrip("h"))
-                from_ts = now - (hours * 3600)
+                now = int(time.time())
+                from_ts = now - _timeframe_seconds(timeframe)
 
                 response = await client.get(
                     f"{base_url}/api/v1/query",
@@ -989,20 +984,21 @@ class DatadogTool(Tool):
                     headers=headers,
                 )
             else:
+                now = int(time.time())
                 response = await client.get(
                     f"{base_url}/api/v1/events",
-                    params={"start": "now-1h", "end": "now"},
+                    params={"start": now - _timeframe_seconds(timeframe), "end": now},
                     headers=headers,
                 )
 
             response.raise_for_status()
-            return response.json()
+            body: dict[str, Any] = response.json()
+            return body
 
     def _generate_mock_result(
         self,
         action: str,
         query: str,
-        timeframe: str,
     ) -> dict[str, Any]:
         """Generate mock Datadog results."""
         if action == "query_metrics":

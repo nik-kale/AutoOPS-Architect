@@ -1,13 +1,14 @@
 """Goal model representing a user's natural language operations request."""
 
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.timeutils import utcnow
 
-class Environment(str, Enum):
+
+class Environment(StrEnum):
     """Target environment for the operations goal."""
 
     PRODUCTION = "production"
@@ -16,13 +17,13 @@ class Environment(str, Enum):
     UNKNOWN = "unknown"
 
 
-class Priority(str, Enum):
+class Priority(StrEnum):
     """Priority/severity level of the goal."""
 
     CRITICAL = "critical"  # P0 - Immediate attention required
-    HIGH = "high"          # P1 - Urgent, needs resolution soon
-    MEDIUM = "medium"      # P2 - Important but not urgent
-    LOW = "low"            # P3 - Can be addressed when convenient
+    HIGH = "high"  # P1 - Urgent, needs resolution soon
+    MEDIUM = "medium"  # P2 - Important but not urgent
+    LOW = "low"  # P3 - Can be addressed when convenient
     UNKNOWN = "unknown"
 
 
@@ -47,43 +48,36 @@ class Goal(BaseModel):
         ...,
         min_length=10,
         max_length=2000,
-        description="Natural language description of the operations goal"
+        description="Natural language description of the operations goal",
     )
 
     services: list[str] = Field(
-        default_factory=list,
-        description="List of service names relevant to this goal"
+        default_factory=list, description="List of service names relevant to this goal"
     )
 
     environment: Environment = Field(
         default=Environment.UNKNOWN,
-        description="Target environment (production, staging, development)"
+        description="Target environment (production, staging, development)",
     )
 
     priority: Priority = Field(
-        default=Priority.UNKNOWN,
-        description="Priority/severity level of this goal"
+        default=Priority.UNKNOWN, description="Priority/severity level of this goal"
     )
 
     tags: list[str] = Field(
-        default_factory=list,
-        description="Optional tags for categorization and memory retrieval"
+        default_factory=list, description="Optional tags for categorization and memory retrieval"
     )
 
-    context: Optional[str] = Field(
-        default=None,
-        max_length=5000,
-        description="Additional context or background information"
+    context: str | None = Field(
+        default=None, max_length=5000, description="Additional context or background information"
     )
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="Timestamp when the goal was created"
+        default_factory=utcnow, description="Timestamp when the goal was created"
     )
 
-    requester: Optional[str] = Field(
-        default=None,
-        description="Identifier for who requested this goal (e.g., username, team)"
+    requester: str | None = Field(
+        default=None, description="Identifier for who requested this goal (e.g., username, team)"
     )
 
     model_config = {
@@ -95,15 +89,15 @@ class Goal(BaseModel):
                     "environment": "production",
                     "priority": "high",
                     "tags": ["error-rate", "checkout"],
-                    "context": "Started seeing increased errors around 2pm UTC after deployment v2.3.1"
+                    "context": "Started seeing increased errors around 2pm UTC after deployment v2.3.1",
                 },
                 {
                     "description": "Debug slow response times on the login API endpoint",
                     "services": ["auth-service"],
                     "environment": "production",
                     "priority": "medium",
-                    "tags": ["latency", "authentication"]
-                }
+                    "tags": ["latency", "authentication"],
+                },
             ]
         }
     }
@@ -153,11 +147,47 @@ class Goal(BaseModel):
         # Extract simple keywords from description (basic tokenization)
         # In a real implementation, this could use NLP for better extraction
         common_words = {
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "must", "shall",
-            "can", "need", "dare", "ought", "used", "to", "for", "in",
-            "on", "at", "by", "with", "from", "of", "and", "or", "but"
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "can",
+            "need",
+            "dare",
+            "ought",
+            "used",
+            "to",
+            "for",
+            "in",
+            "on",
+            "at",
+            "by",
+            "with",
+            "from",
+            "of",
+            "and",
+            "or",
+            "but",
         }
 
         words = self.description.lower().split()

@@ -1,12 +1,15 @@
 """Workflow scheduling with cron support."""
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pydantic import BaseModel, Field
+
+from autoops_architect.timeutils import utcnow
 
 
 class Schedule(BaseModel):
@@ -16,13 +19,13 @@ class Schedule(BaseModel):
     name: str = Field(..., min_length=3, max_length=100)
     cron: str = Field(..., description="Cron expression (e.g., '0 9 * * *')")
     timezone: str = Field(default="UTC", description="Timezone for schedule")
-    template_id: Optional[str] = Field(None, description="Workflow template ID")
-    goal_description: Optional[str] = Field(None, description="Goal description")
+    template_id: str | None = Field(None, description="Workflow template ID")
+    goal_description: str | None = Field(None, description="Goal description")
     parameters: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_run: Optional[datetime] = None
-    next_run: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+    last_run: datetime | None = None
+    next_run: datetime | None = None
     run_count: int = Field(default=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -32,15 +35,15 @@ class ScheduleExecution(BaseModel):
 
     id: str
     schedule_id: str
-    workflow_id: Optional[str] = None
+    workflow_id: str | None = None
     status: str = "scheduled"  # scheduled, running, completed, failed
-    started_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
+    started_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
+    error: str | None = None
 
 
 # Global scheduler instance
-_scheduler: Optional[AsyncIOScheduler] = None
+_scheduler: AsyncIOScheduler | None = None
 _schedules_db: dict[str, Schedule] = {}
 _executions_db: dict[str, ScheduleExecution] = {}
 
@@ -56,7 +59,7 @@ def get_scheduler() -> AsyncIOScheduler:
 
 def add_schedule(
     schedule: Schedule,
-    callback: Callable,
+    callback: Callable[[str], Awaitable[None]],
 ) -> str:
     """
     Add a scheduled job.
@@ -69,16 +72,16 @@ def add_schedule(
         Job ID from APScheduler.
     """
     scheduler = get_scheduler()
-    
+
     # Parse cron expression
     cron_parts = schedule.cron.split()
     if len(cron_parts) != 5:
         raise ValueError(
             "Invalid cron expression. Expected format: 'minute hour day month day_of_week'"
         )
-    
+
     minute, hour, day, month, day_of_week = cron_parts
-    
+
     # Create trigger
     trigger = CronTrigger(
         minute=minute,
@@ -88,7 +91,7 @@ def add_schedule(
         day_of_week=day_of_week,
         timezone=schedule.timezone,
     )
-    
+
     # Add job
     job = scheduler.add_job(
         callback,
@@ -98,12 +101,12 @@ def add_schedule(
         args=[schedule.id],
         replace_existing=True,
     )
-    
+
     # Update next run time
     schedule.next_run = job.next_run_time
     _schedules_db[schedule.id] = schedule
-    
-    return job.id
+
+    return str(job.id)
 
 
 def remove_schedule(schedule_id: str) -> bool:
@@ -117,7 +120,7 @@ def remove_schedule(schedule_id: str) -> bool:
         True if removed, False if not found.
     """
     scheduler = get_scheduler()
-    
+
     try:
         scheduler.remove_job(schedule_id)
         if schedule_id in _schedules_db:
@@ -131,10 +134,10 @@ def pause_schedule(schedule_id: str) -> bool:
     """Pause a schedule."""
     scheduler = get_scheduler()
     schedule = _schedules_db.get(schedule_id)
-    
+
     if not schedule:
         return False
-    
+
     try:
         scheduler.pause_job(schedule_id)
         schedule.enabled = False
@@ -147,10 +150,10 @@ def resume_schedule(schedule_id: str) -> bool:
     """Resume a paused schedule."""
     scheduler = get_scheduler()
     schedule = _schedules_db.get(schedule_id)
-    
+
     if not schedule:
         return False
-    
+
     try:
         scheduler.resume_job(schedule_id)
         schedule.enabled = True
@@ -159,7 +162,7 @@ def resume_schedule(schedule_id: str) -> bool:
         return False
 
 
-def get_schedule(schedule_id: str) -> Optional[Schedule]:
+def get_schedule(schedule_id: str) -> Schedule | None:
     """Get schedule by ID."""
     schedule = _schedules_db.get(schedule_id)
     if schedule:
@@ -177,7 +180,7 @@ def get_schedule(schedule_id: str) -> Optional[Schedule]:
 def list_schedules() -> list[Schedule]:
     """List all schedules."""
     scheduler = get_scheduler()
-    
+
     # Update next run times
     for schedule in _schedules_db.values():
         try:
@@ -186,15 +189,15 @@ def list_schedules() -> list[Schedule]:
                 schedule.next_run = job.next_run_time
         except Exception:
             pass
-    
+
     return list(_schedules_db.values())
 
 
 def record_execution(
     schedule_id: str,
-    workflow_id: Optional[str] = None,
+    workflow_id: str | None = None,
     status: str = "completed",
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> ScheduleExecution:
     """Record a schedule execution."""
     execution = ScheduleExecution(
@@ -202,27 +205,24 @@ def record_execution(
         schedule_id=schedule_id,
         workflow_id=workflow_id,
         status=status,
-        completed_at=datetime.utcnow() if status in ["completed", "failed"] else None,
+        completed_at=utcnow() if status in ["completed", "failed"] else None,
         error=error,
     )
-    
+
     _executions_db[execution.id] = execution
-    
+
     # Update schedule
     schedule = _schedules_db.get(schedule_id)
     if schedule:
         schedule.last_run = execution.started_at
         schedule.run_count += 1
-    
+
     return execution
 
 
 def get_schedule_executions(schedule_id: str, limit: int = 50) -> list[ScheduleExecution]:
     """Get execution history for a schedule."""
-    executions = [
-        e for e in _executions_db.values()
-        if e.schedule_id == schedule_id
-    ]
+    executions = [e for e in _executions_db.values() if e.schedule_id == schedule_id]
     executions.sort(key=lambda x: x.started_at, reverse=True)
     return executions[:limit]
 
@@ -233,4 +233,3 @@ def shutdown_scheduler() -> None:
     if _scheduler:
         _scheduler.shutdown(wait=True)
         _scheduler = None
-

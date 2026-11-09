@@ -1,17 +1,23 @@
 """Export formats for workflows."""
 
 import json
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
 from autoops_architect.models.workflow import WorkflowGraph
 
 
-class ExportFormat(str, Enum):
+def _literal_for_actions(text: str) -> str:
+    """Stop GitHub Actions evaluating ${{ }} in text that came from a goal or an LLM."""
+    return text.replace("${{", "${{ '${{' }}")
+
+
+class ExportFormat(StrEnum):
     """Supported export formats."""
+
     YAML = "yaml"
     JSON = "json"
     MERMAID = "mermaid"
@@ -62,7 +68,7 @@ class WorkflowExporter:
 
         return exporter()
 
-    def save(self, path: Path, format: Optional[ExportFormat] = None) -> None:
+    def save(self, path: Path, format: ExportFormat | None = None) -> None:
         """
         Save workflow to file.
 
@@ -110,7 +116,7 @@ class WorkflowExporter:
 
         Generates a Workflow manifest compatible with Argo Workflows.
         """
-        argo_workflow = {
+        argo_workflow: dict[str, Any] = {
             "apiVersion": "argoproj.io/v1alpha1",
             "kind": "Workflow",
             "metadata": {
@@ -127,7 +133,7 @@ class WorkflowExporter:
         }
 
         # Generate DAG template
-        dag_template = {
+        dag_template: dict[str, Any] = {
             "name": "main",
             "dag": {
                 "tasks": [],
@@ -135,13 +141,13 @@ class WorkflowExporter:
         }
 
         # Build dependency map
-        node_deps = {node.id: [] for node in self.workflow.nodes}
+        node_deps: dict[str, list[str]] = {node.id: [] for node in self.workflow.nodes}
         for edge in self.workflow.edges:
             node_deps[edge.to_node_id].append(edge.from_node_id)
 
         # Create tasks
         for node in self.workflow.nodes:
-            task = {
+            task: dict[str, Any] = {
                 "name": node.id,
                 "template": f"task-{node.id}",
             }
@@ -152,14 +158,16 @@ class WorkflowExporter:
             dag_template["dag"]["tasks"].append(task)
 
             # Create task template
-            task_template = {
+            task_template: dict[str, Any] = {
                 "name": f"task-{node.id}",
                 "container": {
                     "image": "autoops-architect/runner:latest",
                     "command": ["autoops-runner"],
                     "args": [
-                        "--tool", node.tool or "echo",
-                        "--params", json.dumps(node.params),
+                        "--tool",
+                        node.tool or "echo",
+                        "--params",
+                        json.dumps(node.params),
                     ],
                     "resources": {
                         "requests": {
@@ -192,12 +200,12 @@ class WorkflowExporter:
         sorted_nodes = self.workflow.topological_sort()
 
         # Build dependency map
-        node_deps = {node.id: [] for node in self.workflow.nodes}
+        node_deps: dict[str, list[str]] = {node.id: [] for node in self.workflow.nodes}
         for edge in self.workflow.edges:
             node_deps[edge.to_node_id].append(edge.from_node_id)
 
-        gha_workflow = {
-            "name": self.workflow.name,
+        gha_workflow: dict[str, Any] = {
+            "name": _literal_for_actions(self.workflow.name),
             "on": {
                 "workflow_dispatch": {
                     "inputs": {
@@ -212,13 +220,13 @@ class WorkflowExporter:
             },
             "env": {
                 "WORKFLOW_ID": self.workflow.id,
-                "GOAL": self.workflow.goal_description,
+                "GOAL": _literal_for_actions(self.workflow.goal_description),
             },
             "jobs": {},
         }
 
         for node in sorted_nodes:
-            job = {
+            job: dict[str, Any] = {
                 "runs-on": "ubuntu-latest",
                 "steps": [
                     {
@@ -237,15 +245,14 @@ class WorkflowExporter:
                         "run": "pip install autoops-architect",
                     },
                     {
-                        "name": f"Execute: {node.name}",
-                        "run": (
-                            f"autoops run-node "
-                            f"--tool '{node.tool or 'echo'}' "
-                            f"--params '{json.dumps(node.params)}'"
-                        ),
+                        "name": _literal_for_actions(f"Execute: {node.name}"),
+                        # Values travel through env so the shell never parses them.
+                        "run": 'autoops run-node --tool "$NODE_TOOL" --params "$NODE_PARAMS"',
                         "env": {
                             "NODE_ID": node.id,
                             "NODE_TYPE": node.type.value,
+                            "NODE_TOOL": _literal_for_actions(node.tool or "echo"),
+                            "NODE_PARAMS": _literal_for_actions(json.dumps(node.params)),
                         },
                     },
                 ],
@@ -253,9 +260,7 @@ class WorkflowExporter:
 
             # Add dependencies (convert to valid job names)
             if node_deps[node.id]:
-                job["needs"] = [
-                    dep.replace("-", "_") for dep in node_deps[node.id]
-                ]
+                job["needs"] = [dep.replace("-", "_") for dep in node_deps[node.id]]
 
             # Use valid job name
             job_name = node.id.replace("-", "_")
@@ -265,6 +270,7 @@ class WorkflowExporter:
 
 
 # Convenience functions
+
 
 def export_to_yaml(workflow: WorkflowGraph) -> str:
     """Export workflow to YAML."""
