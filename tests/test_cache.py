@@ -133,7 +133,7 @@ class TestFilesystemCacheBackend:
             enabled=True,
             backend="filesystem",
             cache_dir=temp_dir,
-            max_size=5,
+            max_size=10,
         )
         return FilesystemCacheBackend(config)
 

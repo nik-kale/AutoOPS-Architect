@@ -68,6 +68,7 @@ class TestJSONMemoryBackend:
 
     def test_create_backend(self, temp_json_path):
         """Test creating a JSON backend."""
+        os.unlink(temp_json_path)
         backend = JSONMemoryBackend(temp_json_path)
         assert backend.file_path.exists() is False  # Created on first save
 

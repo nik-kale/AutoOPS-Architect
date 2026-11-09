@@ -225,7 +225,7 @@ class TestLoggingIntegration:
         logger = get_logger("test")
 
         goal = Goal(
-            description="Test goal",
+            description="Test goal for the planner",
             services=["test-service"],
             environment=Environment.PRODUCTION,
             priority=Priority.HIGH,

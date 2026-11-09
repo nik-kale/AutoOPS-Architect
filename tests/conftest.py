@@ -1,5 +1,7 @@
 """Shared test fixtures for AutoOps Architect."""
 
+from pathlib import Path
+
 import pytest
 
 from autoops_architect.llm.base import LLMConfig, LLMProvider
@@ -8,6 +10,22 @@ from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 from autoops_architect.tools.base import ToolRegistry
 from autoops_architect.tools.builtin import EchoTool, LogCollectorTool, SummaryTool
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests away from the real home directory, local services and API keys."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    # Integration tools fall back to mocks only when the connection is refused,
+    # so point them at a closed port rather than whatever is running locally.
+    closed_port = "http://127.0.0.1:9"
+    for name in ("AUTORCA_URL", "MCP_GATEWAY_URL", "OPS_AGENT_DESKTOP_URL"):
+        monkeypatch.setenv(name, closed_port)
+
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AUTOOPS_AUTH_ENABLED"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

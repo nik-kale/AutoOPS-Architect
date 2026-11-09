@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from autoops_architect.executor.engine import WorkflowExecutor, WorkflowExecutorConfig
+from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
 from autoops_architect.llm.base import LLMConfig, LLMMessage, LLMProvider
 from autoops_architect.llm.providers import MockLLMClient
 from autoops_architect.models.goal import Environment, Goal
@@ -56,7 +56,7 @@ class TestAsyncioCompat:
         architect = Architect(config=config)
 
         goal = Goal(
-            description="Test goal",
+            description="Test goal for the planner",
             services=["test-service"],
             environment=Environment.PRODUCTION,
         )
@@ -73,7 +73,7 @@ class TestAsyncioCompat:
         architect = Architect(config=config)
 
         goal = Goal(
-            description="Test goal",
+            description="Test goal for the planner",
             services=["test-service"],
             environment=Environment.PRODUCTION,
         )
@@ -87,7 +87,7 @@ class TestAsyncioCompat:
 
     def test_executor_sync(self) -> None:
         """Test that execute_sync works correctly."""
-        config = WorkflowExecutorConfig(dry_run=True)
+        config = ExecutorConfig(dry_run=True)
         registry = ToolRegistry()
         executor = WorkflowExecutor(config=config, tool_registry=registry)
 
@@ -116,7 +116,7 @@ class TestAsyncioCompat:
 
     def test_executor_sync_from_async_raises(self) -> None:
         """Test that execute_sync raises when called from async context."""
-        config = WorkflowExecutorConfig(dry_run=True)
+        config = ExecutorConfig(dry_run=True)
         registry = ToolRegistry()
         executor = WorkflowExecutor(config=config, tool_registry=registry)
 
@@ -162,14 +162,14 @@ class TestAsyncioCompat:
             planner_config = PlannerConfig()
             architect = Architect(config=planner_config)
             goal = Goal(
-                description="Test",
+                description="Test goal for the planner",
                 services=["test"],
                 environment=Environment.PRODUCTION,
             )
             architect.plan_sync(goal)
 
             # Test executor
-            executor_config = WorkflowExecutorConfig(dry_run=True)
+            executor_config = ExecutorConfig(dry_run=True)
             registry = ToolRegistry()
             executor = WorkflowExecutor(config=executor_config, tool_registry=registry)
             workflow = WorkflowGraph(

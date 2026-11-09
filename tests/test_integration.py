@@ -216,6 +216,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )
@@ -238,6 +239,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )
@@ -259,6 +261,7 @@ class TestMemoryIntegration:
 
         result = WorkflowRunResult(
             workflow_id=workflow.id,
+            goal_description=goal.description,
             overall_status=ExecutionStatus.SUCCESS,
             node_results=[],
         )

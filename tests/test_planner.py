@@ -159,9 +159,6 @@ class TestArchitect:
             type=NodeType.SERVICE_RESTART,
             tool="shell",
         )
-        # Force override (in real code this shouldn't happen)
-        object.__setattr__(node, "requires_human_approval", False)
-
         workflow = WorkflowGraph(
             id="wf-test",
             name="Test",
@@ -169,6 +166,10 @@ class TestArchitect:
             nodes=[node],
             edges=[],
         )
+
+        # Force override after construction: building the graph re-runs the
+        # node validator, which restores the flag (in real code this shouldn't happen)
+        object.__setattr__(workflow.nodes[0], "requires_human_approval", False)
 
         issues = architect.validate_workflow(workflow)
         assert any("should require human approval" in issue for issue in issues)
