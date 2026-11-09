@@ -1,9 +1,12 @@
 """Input sanitization and validation utilities."""
 
 import html
+import ipaddress
 import os
 import re
 import shlex
+import socket
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -109,10 +112,39 @@ def sanitize_goal(
     Raises:
         PromptInjectionError: If injection detected and raise_on_injection=True.
     """
-    original_goal = goal
+    result = sanitize_prompt_text(goal, mode=mode, raise_on_injection=raise_on_injection)
 
-    # Basic sanitization
-    goal = sanitize_string(goal, max_length=MAX_GOAL_LENGTH, allow_newlines=True)
+    # Ensure we still have meaningful content
+    if len(result) < 10:
+        raise ValueError("Goal description too short after sanitization (minimum 10 characters)")
+
+    return result
+
+
+def sanitize_prompt_text(
+    text: str,
+    mode: str = "strict",
+    raise_on_injection: bool = True,
+) -> str:
+    """
+    Screen any untrusted text that is about to be placed in an LLM prompt.
+
+    Args:
+        text: Raw text.
+        mode: Sanitization mode ('strict', 'moderate', 'permissive').
+        raise_on_injection: If True, raise exception on injection detection.
+
+    Returns:
+        Sanitized text.
+
+    Raises:
+        PromptInjectionError: If injection detected and raise_on_injection=True.
+    """
+    original_text = text
+
+    # Basic sanitization. Not HTML-escaped: this is prompt text, not markup, and
+    # escaping would turn "latency > 500ms" into "latency &gt; 500ms".
+    text = sanitize_string(text, max_length=MAX_GOAL_LENGTH, allow_newlines=True, strip_html=False)
 
     # Prompt injection patterns - organized by severity
     critical_patterns = [
@@ -154,34 +186,25 @@ def sanitize_goal(
         raise ValueError(f"Invalid sanitization mode: {mode}")
 
     # Detect injections
-    detected_patterns = []
     for pattern in patterns_to_check:
-        if re.search(pattern, goal, flags=re.IGNORECASE):
-            detected_patterns.append(pattern)
-            if raise_on_injection:
-                raise PromptInjectionError(
-                    f"Potential prompt injection detected in goal. "
-                    f"Pattern: {pattern}. Original: {original_goal[:100]}"
-                )
+        if raise_on_injection and re.search(pattern, text, flags=re.IGNORECASE):
+            raise PromptInjectionError(
+                f"Potential prompt injection detected in goal. "
+                f"Pattern: {pattern}. Original: {original_text[:100]}"
+            )
 
     # If not raising, sanitize by removal
     for pattern in patterns_to_check:
-        goal = re.sub(pattern, "[REMOVED]", goal, flags=re.IGNORECASE)
+        text = re.sub(pattern, "[REMOVED]", text, flags=re.IGNORECASE)
 
     # Additional safety: remove excessive special characters
     if mode == "strict":
         # Limit consecutive special characters
-        goal = re.sub(r"[^\w\s]{5,}", "...", goal)
+        text = re.sub(r"[^\w\s]{5,}", "...", text)
         # Remove unusual Unicode ranges that might confuse models
-        goal = "".join(c for c in goal if ord(c) < 0x2000 or ord(c) > 0x2BFF)
+        text = "".join(c for c in text if ord(c) < 0x2000 or ord(c) > 0x2BFF)
 
-    result = goal.strip()
-
-    # Ensure we still have meaningful content
-    if len(result) < 10:
-        raise ValueError("Goal description too short after sanitization (minimum 10 characters)")
-
-    return result
+    return text.strip()
 
 
 def sanitize_params(
@@ -235,6 +258,29 @@ def escape_for_shell(value: str) -> str:
     return shlex.quote(value)
 
 
+def _is_internal_host(hostname: str) -> bool:
+    """
+    Check whether a hostname is a loopback name or a non-public IP address.
+
+    Names that merely resolve to an internal address are not detected here.
+    """
+    lowered = hostname.lower()
+    if lowered == "localhost" or lowered.endswith(".localhost"):
+        return True
+
+    try:
+        address = ipaddress.ip_address(lowered)
+    except ValueError:
+        try:
+            # Numeric forms such as 127.1 and 2130706433 also reach loopback
+            address = ipaddress.ip_address(socket.inet_ntoa(socket.inet_aton(lowered)))
+        except OSError:
+            return False
+
+    mapped = getattr(address, "ipv4_mapped", None)
+    return not (mapped or address).is_global
+
+
 def validate_url(
     url: str,
     allowed_schemes: list[str] | None = None,
@@ -273,16 +319,8 @@ def validate_url(
 
     # Check for local addresses that might be SSRF
     hostname = parsed.hostname or ""
-    dangerous_hosts = [
-        "localhost",
-        "127.0.0.1",
-        "0.0.0.0",
-        "::1",
-        "169.254.",  # Link-local
-    ]
-    for dangerous in dangerous_hosts:
-        if hostname.startswith(dangerous) or hostname == dangerous:
-            return False, f"Host '{hostname}' is not allowed (local address)"
+    if _is_internal_host(hostname):
+        return False, f"Host '{hostname}' is not allowed (local address)"
 
     # Check against whitelist if provided
     if allowed_hosts:
@@ -325,10 +363,9 @@ def validate_path(
     if "\x00" in path:
         return False, "Path contains null byte"
 
-    # Check for path traversal patterns
-    for pattern in PATH_TRAVERSAL_PATTERNS:
-        if re.search(pattern, path):
-            return False, "Path contains traversal sequence"
+    # Check for path traversal patterns, and for ".." as a whole component
+    if ".." in re.split(r"[\\/]", path) or any(re.search(p, path) for p in PATH_TRAVERSAL_PATTERNS):
+        return False, "Path contains traversal sequence"
 
     # Normalize the path
     try:
@@ -345,7 +382,7 @@ def validate_path(
         base_resolved = os.path.realpath(os.path.expanduser(base_dir))
         path_resolved = os.path.realpath(os.path.join(base_resolved, normalized))
 
-        if not path_resolved.startswith(base_resolved):
+        if not Path(path_resolved).is_relative_to(base_resolved):
             return False, "Path escapes base directory"
 
     return True, None
@@ -408,7 +445,7 @@ def redact_sensitive(
     """
     default_patterns = [
         # API keys
-        r"sk-[a-zA-Z0-9]{20,}",
+        r"sk-[a-zA-Z0-9_\-]{20,}",
         r"xoxb-[a-zA-Z0-9-]{20,}",
         r"AKIA[0-9A-Z]{16}",
         r"ghp_[a-zA-Z0-9]{36}",

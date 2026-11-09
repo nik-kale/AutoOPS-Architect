@@ -154,7 +154,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         for i in range(len(text_lower) - 2):
             trigram = text_lower[i : i + 3]
             # Hash the trigram to a position
-            h = int(hashlib.md5(trigram.encode()).hexdigest(), 16)
+            h = int(hashlib.md5(trigram.encode(), usedforsecurity=False).hexdigest(), 16)
             idx = trigram_start + (h % (trigram_end - trigram_start))
             embedding[idx] += 1.0
 
@@ -164,7 +164,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
         for word in words:
             if len(word) > 2:
-                h = int(hashlib.md5(word.encode()).hexdigest(), 16)
+                h = int(hashlib.md5(word.encode(), usedforsecurity=False).hexdigest(), 16)
                 idx = word_start + (h % (word_end - word_start))
                 embedding[idx] += 1.0
 

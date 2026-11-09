@@ -13,6 +13,7 @@ from autoops_architect.safety.sanitizer import (
     escape_for_shell,
     sanitize_goal,
     sanitize_params,
+    sanitize_prompt_text,
     sanitize_string,
     validate_path,
     validate_url,
@@ -43,6 +44,7 @@ __all__ = [
     # Sanitizer
     "sanitize_goal",
     "sanitize_params",
+    "sanitize_prompt_text",
     "sanitize_string",
     "escape_for_shell",
     "validate_url",
