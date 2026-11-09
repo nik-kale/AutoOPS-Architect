@@ -102,7 +102,7 @@ class TestWorkflowExecutor:
         """Test execution with status callback."""
         status_updates = []
 
-        def callback(node_id, status, result=None):
+        def callback(node_id, status, _result=None):
             status_updates.append((node_id, status))
 
         executor = WorkflowExecutor(tool_registry=executor_registry)
@@ -266,7 +266,7 @@ class TestInteractiveExecutor:
         executor = InteractiveExecutor(tool_registry=executor_registry)
 
         executed_nodes = []
-        async for node, result in executor.execute_interactive(sample_workflow):
+        async for node, _result in executor.execute_interactive(sample_workflow):
             executed_nodes.append(node.id)
 
         assert len(executed_nodes) == len(sample_workflow.nodes)
@@ -278,7 +278,7 @@ class TestInteractiveExecutor:
         executor = InteractiveExecutor(config=config, tool_registry=executor_registry)
 
         executed_nodes = []
-        async for node, result in executor.execute_interactive(sample_workflow):
+        async for node, _result in executor.execute_interactive(sample_workflow):
             executed_nodes.append(node.id)
             if len(executed_nodes) >= 2:
                 break

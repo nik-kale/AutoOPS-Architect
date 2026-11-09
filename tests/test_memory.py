@@ -194,7 +194,7 @@ class TestSQLiteMemoryBackend:
 
     def test_create_backend(self, temp_db_path):
         """Test creating a SQLite backend."""
-        backend = SQLiteMemoryBackend(temp_db_path)
+        SQLiteMemoryBackend(temp_db_path)
         assert os.path.exists(temp_db_path)
 
     def test_save_and_retrieve(self, temp_db_path, sample_run_data):

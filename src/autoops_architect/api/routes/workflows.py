@@ -1,6 +1,7 @@
 """Workflow-related API routes."""
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -79,6 +80,14 @@ def _workflow_to_response(workflow: WorkflowGraph) -> WorkflowResponse:
     )
 
 
+def _get_execution(workflow_id: str, execution_id: str) -> dict[str, Any]:
+    """Look up an execution, requiring that it belongs to the workflow in the URL."""
+    execution = _active_executions.get(execution_id)
+    if execution is None or execution["workflow_id"] != workflow_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return execution
+
+
 @router.post("", response_model=WorkflowResponse, dependencies=[requires("create:workflows")])
 async def create_workflow(
     request: GoalRequest,
@@ -94,17 +103,13 @@ async def create_workflow(
     # Build the Goal object
     environment = Environment.UNKNOWN
     if request.environment:
-        try:
+        with contextlib.suppress(ValueError):
             environment = Environment(request.environment.lower())
-        except ValueError:
-            pass
 
     priority = Priority.UNKNOWN
     if request.priority:
-        try:
+        with contextlib.suppress(ValueError):
             priority = Priority(request.priority.lower())
-        except ValueError:
-            pass
 
     goal = Goal(
         description=request.description,
@@ -130,12 +135,12 @@ async def create_workflow(
                 constraints=request.constraints,
             )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate workflow: {str(e)}",
-        )
+        ) from e
 
     # Store the workflow for later execution
     _active_workflows[workflow.id] = workflow
@@ -347,8 +352,7 @@ async def stream_execution(
 
     Connect to this endpoint to receive real-time updates during workflow execution.
     """
-    if execution_id not in _active_executions:
-        raise HTTPException(status_code=404, detail="Execution not found")
+    _get_execution(workflow_id, execution_id)
 
     async def event_generator() -> AsyncGenerator[str, None]:
         last_event_count = 0
@@ -397,10 +401,7 @@ async def get_execution_status(
     execution_id: str,
 ) -> ExecutionResponse:
     """Get the current status of a workflow execution."""
-    if execution_id not in _active_executions:
-        raise HTTPException(status_code=404, detail="Execution not found")
-
-    execution = _active_executions[execution_id]
+    execution = _get_execution(workflow_id, execution_id)
 
     success_count = sum(1 for r in execution["node_results"] if r.get("status") == "success")
     failed_count = sum(1 for r in execution["node_results"] if r.get("status") == "failed")

@@ -213,8 +213,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """Generate embeddings using OpenAI API."""
         try:
             import httpx
-        except ImportError:
-            raise ImportError("httpx required for OpenAI embeddings: pip install httpx")
+        except ImportError as e:
+            raise ImportError("httpx required for OpenAI embeddings: pip install httpx") from e
 
         response = httpx.post(
             "https://api.openai.com/v1/embeddings",
@@ -308,7 +308,7 @@ def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
     if len(vec1) != len(vec2):
         raise ValueError("Vectors must have same dimension")
 
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=True))
     magnitude1 = math.sqrt(sum(a * a for a in vec1))
     magnitude2 = math.sqrt(sum(b * b for b in vec2))
 
@@ -420,13 +420,10 @@ class SemanticSearcher:
         semantic_score = self.semantic_similarity(query, text)
 
         # Keyword overlap
-        query_kw = set(k.lower() for k in keywords)
-        text_kw = set(k.lower() for k in text_keywords)
+        query_kw = {k.lower() for k in keywords}
+        text_kw = {k.lower() for k in text_keywords}
 
-        if query_kw:
-            keyword_score = len(query_kw & text_kw) / len(query_kw)
-        else:
-            keyword_score = 0.0
+        keyword_score = len(query_kw & text_kw) / len(query_kw) if query_kw else 0.0
 
         # Combine scores
         keyword_weight = 1.0 - semantic_weight

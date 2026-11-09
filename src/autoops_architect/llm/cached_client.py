@@ -71,6 +71,7 @@ class CachedLLMClient(LLMClient):
         self.cache_config = cache_config or CacheConfig(enabled=False)
         self.cache_enabled = self.cache_config.enabled
 
+        self.cache: CacheBackend | None
         if cache_backend:
             self.cache = cache_backend
         elif self.cache_enabled:

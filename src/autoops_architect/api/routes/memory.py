@@ -1,15 +1,17 @@
 """Memory-related API routes."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query
 
 from autoops_architect.api.auth import requires
 from autoops_architect.api.models import MemoryEntryResponse
-from autoops_architect.memory.backend import get_memory_backend
+from autoops_architect.memory.backend import MemoryBackend, get_memory_backend
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
-def _get_backend():
+def _get_backend() -> MemoryBackend:
     """Get the memory backend."""
     return get_memory_backend(backend_type="json")
 
@@ -80,7 +82,7 @@ async def search_memory(
 
 
 @router.get("/stats", response_model=dict, dependencies=[requires("read:memory")])
-async def get_memory_stats() -> dict:
+async def get_memory_stats() -> dict[str, Any]:
     """Get memory statistics."""
     backend = _get_backend()
     entries = backend.list_entries(limit=1000)

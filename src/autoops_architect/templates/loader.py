@@ -1,5 +1,6 @@
 """Template loader for loading templates from files and directories."""
 
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -112,10 +113,7 @@ class TemplateLoader:
         patterns = ["*.json", "*.yaml", "*.yml"]
 
         for pattern in patterns:
-            if recursive:
-                files = path.rglob(pattern)
-            else:
-                files = path.glob(pattern)
+            files = path.rglob(pattern) if recursive else path.glob(pattern)
 
             for file_path in files:
                 try:
@@ -243,8 +241,8 @@ def load_all_file_templates() -> list[WorkflowTemplate]:
     Returns:
         List of all loaded templates from files.
     """
-    templates = []
-    seen_ids = set()
+    templates: list[WorkflowTemplate] = []
+    seen_ids: set[str] = set()
 
     # Load in order, later templates override earlier ones
     for directory in discover_template_directories():
@@ -283,10 +281,8 @@ def create_registry_with_file_templates(
     # First add code-defined templates
     if include_builtin_code:
         for template in get_builtin_templates():
-            try:
+            with contextlib.suppress(ValueError):  # Skip duplicates
                 registry.register(template)
-            except ValueError:
-                pass  # Skip duplicates
 
     # Then add file-based templates (can override code-defined ones)
     file_templates = load_all_file_templates()

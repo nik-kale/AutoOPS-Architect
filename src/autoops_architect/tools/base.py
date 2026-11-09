@@ -2,13 +2,12 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from autoops_architect.asyncio_utils import ensure_no_running_loop
-
 
 MCP_TOOL_ID = "secureMCP"
 
@@ -16,7 +15,7 @@ MCP_TOOL_ID = "secureMCP"
 TOOL_ALIASES = {"analysis": "log_analyzer"}
 
 
-class ToolStatus(str, Enum):
+class ToolStatus(StrEnum):
     """Status of a tool execution."""
 
     SUCCESS = "success"

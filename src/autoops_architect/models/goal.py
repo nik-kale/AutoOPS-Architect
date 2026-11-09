@@ -1,12 +1,12 @@
 """Goal model representing a user's natural language operations request."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     """Target environment for the operations goal."""
 
     PRODUCTION = "production"
@@ -15,7 +15,7 @@ class Environment(str, Enum):
     UNKNOWN = "unknown"
 
 
-class Priority(str, Enum):
+class Priority(StrEnum):
     """Priority/severity level of the goal."""
 
     CRITICAL = "critical"  # P0 - Immediate attention required

@@ -332,9 +332,7 @@ class TestCachedLLMClient:
         assert stats["cache_misses"] == 1
         assert stats["hit_rate"] == pytest.approx(0.666, rel=0.01)
 
-    async def test_clear_cache(
-        self, cached_client: CachedLLMClient, mock_client: MockLLMClient
-    ) -> None:
+    async def test_clear_cache(self, cached_client: CachedLLMClient) -> None:
         """Test clearing the cache."""
         messages = [LLMMessage(role="user", content="Test")]
 

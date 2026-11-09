@@ -1,14 +1,14 @@
 """Workflow graph models representing the execution plan."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class NodeType(str, Enum):
+class NodeType(StrEnum):
     """Types of nodes in a workflow graph."""
 
     # Data collection
@@ -273,12 +273,7 @@ class WorkflowGraph(BaseModel):
             state[node_id] = 2  # Mark as completed
             return False
 
-        for node_id in adj:
-            if state[node_id] == 0:
-                if dfs(node_id):
-                    return True
-
-        return False
+        return any(state[node_id] == 0 and dfs(node_id) for node_id in adj)
 
     def get_node(self, node_id: str) -> Node | None:
         """Get a node by its ID."""

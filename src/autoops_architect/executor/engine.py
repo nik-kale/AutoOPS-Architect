@@ -72,10 +72,7 @@ class ConditionEvaluator:
 
         # Extract expression from {{ }} if present
         match = re.match(r"\{\{\s*(.+?)\s*\}\}", condition.strip())
-        if match:
-            expression = match.group(1)
-        else:
-            expression = condition.strip()
+        expression = match.group(1) if match else condition.strip()
 
         try:
             return self._evaluate_expression(expression)
@@ -113,7 +110,7 @@ class ConditionEvaluator:
                 parts = expression.split(op_str, 1)
                 left = self._resolve_value(parts[0].strip())
                 right = self._resolve_value(parts[1].strip())
-                return op_func(left, right)
+                return bool(op_func(left, right))
 
         # If no operator, treat as a boolean check
         value = self._resolve_value(expression.strip())
@@ -181,6 +178,7 @@ class ExecutionCallback(Protocol):
         node_id: str,
         status: ExecutionStatus,
         result: NodeResult | None = None,
+        /,
     ) -> None:
         """Called when a node's status changes."""
         ...
@@ -285,8 +283,9 @@ class WorkflowExecutor:
         for callback in self._status_callbacks:
             try:
                 callback(node_id, status, result)
-            except Exception:
-                pass  # Don't let callback errors break execution
+            except Exception as e:
+                # Don't let callback errors break execution
+                logger.warning("status_callback_failed", node_id=node_id, error=str(e))
 
     async def execute(
         self,
@@ -380,7 +379,7 @@ class WorkflowExecutor:
             completed_nodes=len(state.completed),
             failed_nodes=len(state.failed),
             skipped_nodes=run_result.skipped_count,
-            duration_seconds=(run_result.finished_at - run_result.started_at).total_seconds(),
+            duration_seconds=run_result.duration_seconds,
         )
 
         return run_result
@@ -512,8 +511,8 @@ class WorkflowExecutor:
             result.mark_failed(f"Tool not found: {node.tool}")
             return
 
-        # Build context from parent node outputs
-        deps = self._get_dependency_outputs(node.id)
+        # Tools read earlier results from the whole run, not only direct parents
+        deps = dict(self._execution_context)
 
         # Execute with timeout
         timeout = node.timeout_seconds or self.config.default_timeout_seconds
@@ -560,11 +559,6 @@ class WorkflowExecutor:
             }
         )
         result.raw_output = f"[DRY RUN] Would execute {node.tool} with params: {node.params}"
-
-    def _get_dependency_outputs(self, node_id: str) -> dict[str, dict[str, Any]]:
-        """Get outputs from all nodes this node depends on."""
-        # This would use the workflow graph, but we track it in execution_context
-        return dict(self._execution_context)
 
     async def execute_parallel(
         self,

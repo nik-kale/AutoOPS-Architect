@@ -129,10 +129,10 @@ class WorkflowMemory(BaseModel):
             List of matching entries sorted by relevance.
         """
         results: list[tuple[float, MemoryEntry]] = []
-        keyword_set = set(k.lower() for k in keywords)
+        keyword_set = {k.lower() for k in keywords}
 
         for entry in self.entries:
-            entry_keywords = set(k.lower() for k in entry.keywords)
+            entry_keywords = {k.lower() for k in entry.keywords}
             entry_keywords.update(s.lower() for s in entry.services)
 
             # Simple keyword overlap scoring

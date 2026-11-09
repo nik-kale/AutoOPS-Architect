@@ -76,7 +76,7 @@ class MemoryBackend(ABC):
         query: str,
         limit: int = 5,
         min_score: float = 0.3,
-        use_hybrid: bool = True,
+        use_hybrid: bool = True,  # noqa: ARG002 - used by overrides
     ) -> list[MemoryEntry]:
         """
         Search using semantic similarity.
@@ -263,10 +263,10 @@ class JSONMemoryBackend(MemoryBackend):
     ) -> list[MemoryEntry]:
         """Search for relevant past workflows."""
         results: list[tuple[float, MemoryEntry]] = []
-        keyword_set = set(k.lower() for k in keywords)
+        keyword_set = {k.lower() for k in keywords}
 
         for entry in self._entries.values():
-            entry_keywords = set(k.lower() for k in entry.keywords)
+            entry_keywords = {k.lower() for k in entry.keywords}
             entry_keywords.update(s.lower() for s in entry.services)
 
             # Add words from goal description
@@ -567,12 +567,12 @@ class SQLiteMemoryBackend(MemoryBackend):
             """).fetchall()
 
         # Score entries in Python
-        keyword_set = set(k.lower() for k in keywords)
+        keyword_set = {k.lower() for k in keywords}
         results: list[tuple[float, MemoryEntry]] = []
 
         for row in rows:
             entry = self._row_to_entry(row)
-            entry_keywords = set(k.lower() for k in entry.keywords)
+            entry_keywords = {k.lower() for k in entry.keywords}
             entry_keywords.update(s.lower() for s in entry.services)
 
             if not keyword_set:

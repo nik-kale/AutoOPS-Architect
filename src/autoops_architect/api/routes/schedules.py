@@ -1,6 +1,7 @@
 """Schedule management routes."""
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -33,8 +34,8 @@ class CreateScheduleRequest(BaseModel):
     timezone: str = Field(default="UTC")
     template_id: str | None = None
     goal_description: str | None = None
-    parameters: dict = Field(default_factory=dict)
-    metadata: dict = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # Callback function for scheduled executions
@@ -134,7 +135,7 @@ async def delete_schedule(schedule_id: str) -> None:
     status_code=status.HTTP_200_OK,
     dependencies=[requires("manage:schedules")],
 )
-async def pause_schedule_endpoint(schedule_id: str) -> dict:
+async def pause_schedule_endpoint(schedule_id: str) -> dict[str, str]:
     """Pause a schedule."""
     if not pause_schedule(schedule_id):
         raise HTTPException(status_code=404, detail="Schedule not found")
@@ -146,7 +147,7 @@ async def pause_schedule_endpoint(schedule_id: str) -> dict:
     status_code=status.HTTP_200_OK,
     dependencies=[requires("manage:schedules")],
 )
-async def resume_schedule_endpoint(schedule_id: str) -> dict:
+async def resume_schedule_endpoint(schedule_id: str) -> dict[str, str]:
     """Resume a paused schedule."""
     if not resume_schedule(schedule_id):
         raise HTTPException(status_code=404, detail="Schedule not found")

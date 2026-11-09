@@ -1,7 +1,7 @@
 """Request and response models for the API."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -95,7 +95,7 @@ class WorkflowUpdateRequest(BaseModel):
     )
 
 
-class ExecutionStatus(str, Enum):
+class ExecutionStatus(StrEnum):
     """Status of workflow execution."""
 
     PENDING = "pending"

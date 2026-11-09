@@ -1,7 +1,9 @@
 """Command-line interface for AutoOps Architect."""
 
+import contextlib
 import json
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -15,7 +17,7 @@ from rich.tree import Tree
 from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
 from autoops_architect.llm.base import LLMConfig, LLMProvider
 from autoops_architect.memory.backend import get_memory_backend
-from autoops_architect.models.execution import ExecutionStatus
+from autoops_architect.models.execution import ExecutionStatus, NodeResult
 from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
@@ -119,7 +121,7 @@ def plan(
         except Exception as e:
             progress.update(task, completed=True)
             console.print(f"[red]Error generating workflow: {escape(str(e))}[/]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Display the workflow
     console.print()
@@ -142,10 +144,7 @@ def plan(
         console.print(Syntax(workflow.to_mermaid(), "mermaid"))
 
     # Output to file or stdout
-    if yaml_output:
-        output_content = workflow.to_yaml()
-    else:
-        output_content = workflow.model_dump_json(indent=2)
+    output_content = workflow.to_yaml() if yaml_output else workflow.model_dump_json(indent=2)
 
     if output:
         output.write_text(output_content)
@@ -189,7 +188,7 @@ def run(
             workflow = WorkflowGraph.model_validate(data)
     except Exception as e:
         console.print(f"[red]Error parsing workflow: {escape(str(e))}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     console.print(
         Panel.fit(
@@ -207,7 +206,9 @@ def run(
     executor = WorkflowExecutor(config=config, tool_registry=create_default_registry())
 
     # Add progress callback
-    def on_status_change(node_id: str, status: ExecutionStatus, result=None):
+    def on_status_change(
+        node_id: str, status: ExecutionStatus, _result: NodeResult | None = None
+    ) -> None:
         icon = {
             ExecutionStatus.RUNNING: "⏳",
             ExecutionStatus.SUCCESS: "✅",
@@ -226,7 +227,7 @@ def run(
         result = executor.execute_sync(workflow)
     except Exception as e:
         console.print(f"\n[red]Execution error: {escape(str(e))}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     # Display results
     console.print()
@@ -293,10 +294,8 @@ def plan_and_run(
     # Parse environment
     env = Environment.UNKNOWN
     if environment:
-        try:
+        with contextlib.suppress(ValueError):
             env = Environment(environment.lower())
-        except ValueError:
-            pass
 
     # Create Goal
     goal_obj = Goal(
@@ -321,7 +320,7 @@ def plan_and_run(
         except Exception as e:
             progress.update(task, completed=True)
             console.print(f"[red]Error: {escape(str(e))}[/]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     console.print(f"\n[green]Generated:[/] {escape(workflow.name)} ({len(workflow.nodes)} steps)")
 
@@ -339,7 +338,7 @@ def plan_and_run(
     console.print("[bold]Executing...[/]")
     executor = get_executor(dry_run=dry_run)
 
-    def on_status(node_id: str, status: ExecutionStatus, result=None):
+    def on_status(node_id: str, status: ExecutionStatus, _result: NodeResult | None = None) -> None:
         icon = (
             "✅"
             if status == ExecutionStatus.SUCCESS
@@ -481,7 +480,7 @@ def validate(
 
     except Exception as e:
         console.print(f"[red]Validation failed: {escape(str(e))}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 # Template commands subgroup
@@ -524,7 +523,9 @@ def templates_list(
                 f"[red]Unknown source: {escape(source)}. Valid: builtin, project, user[/]"
             )
             raise typer.Exit(1)
-        templates = [{"template": t, "source": source} for t in templates_by_source.get(source, [])]
+        templates: list[dict[str, Any]] = [
+            {"template": t, "source": source} for t in templates_by_source.get(source, [])
+        ]
     else:
         # Get all templates with source info
         templates = []
@@ -692,7 +693,9 @@ def templates_use(
         console.print("\n[bold]Executing workflow...[/]")
         executor = get_executor(dry_run=dry_run)
 
-        def on_status(node_id: str, status: ExecutionStatus, result=None):
+        def on_status(
+            node_id: str, status: ExecutionStatus, _result: NodeResult | None = None
+        ) -> None:
             icon = (
                 "✅"
                 if status == ExecutionStatus.SUCCESS
@@ -877,7 +880,7 @@ def templates_validate(
 
     except Exception as e:
         console.print(f"[red]Validation failed: {escape(str(e))}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @templates_app.command("categories")
@@ -1109,12 +1112,12 @@ def serve(
     """
     try:
         import uvicorn
-    except ImportError:
+    except ImportError as e:
         console.print(
             "[red]Web dependencies not installed.[/]\n"
             "Install with: pip install autoops-architect[web]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     console.print(
         Panel.fit(

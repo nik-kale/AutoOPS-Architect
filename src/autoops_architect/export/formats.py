@@ -1,8 +1,9 @@
 """Export formats for workflows."""
 
 import json
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -14,7 +15,7 @@ def _literal_for_actions(text: str) -> str:
     return text.replace("${{", "${{ '${{' }}")
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     """Supported export formats."""
 
     YAML = "yaml"
@@ -115,7 +116,7 @@ class WorkflowExporter:
 
         Generates a Workflow manifest compatible with Argo Workflows.
         """
-        argo_workflow = {
+        argo_workflow: dict[str, Any] = {
             "apiVersion": "argoproj.io/v1alpha1",
             "kind": "Workflow",
             "metadata": {
@@ -132,7 +133,7 @@ class WorkflowExporter:
         }
 
         # Generate DAG template
-        dag_template = {
+        dag_template: dict[str, Any] = {
             "name": "main",
             "dag": {
                 "tasks": [],
@@ -140,13 +141,13 @@ class WorkflowExporter:
         }
 
         # Build dependency map
-        node_deps = {node.id: [] for node in self.workflow.nodes}
+        node_deps: dict[str, list[str]] = {node.id: [] for node in self.workflow.nodes}
         for edge in self.workflow.edges:
             node_deps[edge.to_node_id].append(edge.from_node_id)
 
         # Create tasks
         for node in self.workflow.nodes:
-            task = {
+            task: dict[str, Any] = {
                 "name": node.id,
                 "template": f"task-{node.id}",
             }
@@ -157,7 +158,7 @@ class WorkflowExporter:
             dag_template["dag"]["tasks"].append(task)
 
             # Create task template
-            task_template = {
+            task_template: dict[str, Any] = {
                 "name": f"task-{node.id}",
                 "container": {
                     "image": "autoops-architect/runner:latest",
@@ -199,11 +200,11 @@ class WorkflowExporter:
         sorted_nodes = self.workflow.topological_sort()
 
         # Build dependency map
-        node_deps = {node.id: [] for node in self.workflow.nodes}
+        node_deps: dict[str, list[str]] = {node.id: [] for node in self.workflow.nodes}
         for edge in self.workflow.edges:
             node_deps[edge.to_node_id].append(edge.from_node_id)
 
-        gha_workflow = {
+        gha_workflow: dict[str, Any] = {
             "name": _literal_for_actions(self.workflow.name),
             "on": {
                 "workflow_dispatch": {
@@ -225,7 +226,7 @@ class WorkflowExporter:
         }
 
         for node in sorted_nodes:
-            job = {
+            job: dict[str, Any] = {
                 "runs-on": "ubuntu-latest",
                 "steps": [
                     {

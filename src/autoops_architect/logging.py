@@ -40,7 +40,7 @@ REDACTED = "***REDACTED***"
 
 
 def add_correlation_ids(
-    logger: logging.Logger, method_name: str, event_dict: EventDict
+    _logger: logging.Logger, _method_name: str, event_dict: EventDict
 ) -> EventDict:
     """
     Add correlation IDs from context to log entries.
@@ -63,7 +63,7 @@ def add_correlation_ids(
 
 
 def redact_sensitive_data(
-    logger: logging.Logger, method_name: str, event_dict: EventDict
+    _logger: logging.Logger, _method_name: str, event_dict: EventDict
 ) -> EventDict:
     """
     Redact sensitive information from log messages.
@@ -186,7 +186,8 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         >>> logger = get_logger(__name__)
         >>> logger.info("workflow_started", workflow_id="wf-123", node_count=5)
     """
-    return structlog.get_logger(name)
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    return logger
 
 
 class LogContext:

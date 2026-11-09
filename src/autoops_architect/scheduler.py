@@ -1,7 +1,7 @@
 """Workflow scheduling with cron support."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -57,7 +57,7 @@ def get_scheduler() -> AsyncIOScheduler:
 
 def add_schedule(
     schedule: Schedule,
-    callback: Callable,
+    callback: Callable[[str], Awaitable[None]],
 ) -> str:
     """
     Add a scheduled job.
@@ -104,7 +104,7 @@ def add_schedule(
     schedule.next_run = job.next_run_time
     _schedules_db[schedule.id] = schedule
 
-    return job.id
+    return str(job.id)
 
 
 def remove_schedule(schedule_id: str) -> bool:

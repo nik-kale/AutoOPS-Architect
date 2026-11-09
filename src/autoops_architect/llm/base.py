@@ -1,7 +1,7 @@
 """Base LLM client interface and types."""
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from autoops_architect.asyncio_utils import ensure_no_running_loop
 
 
-class LLMProvider(str, Enum):
+class LLMProvider(StrEnum):
     """Supported LLM providers."""
 
     OPENAI = "openai"

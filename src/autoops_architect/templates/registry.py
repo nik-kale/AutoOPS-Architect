@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 
-
 _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
@@ -183,7 +182,7 @@ class TemplateRegistry:
             results = [t for t in results if t.category == category]
 
         if tags:
-            tag_set = set(t.lower() for t in tags)
+            tag_set = {t.lower() for t in tags}
             results = [t for t in results if any(tag.lower() in tag_set for tag in t.tags)]
 
         if query:
@@ -198,7 +197,7 @@ class TemplateRegistry:
 
     def list_categories(self) -> builtins.list[str]:
         """Get all unique categories."""
-        categories = set(t.category for t in self._templates.values())
+        categories = {t.category for t in self._templates.values()}
         return sorted(categories)
 
 

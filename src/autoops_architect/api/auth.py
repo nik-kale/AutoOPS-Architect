@@ -2,8 +2,9 @@
 
 import os
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import bcrypt
@@ -38,7 +39,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     """User roles for RBAC."""
 
     VIEWER = "viewer"  # Read-only access
@@ -165,7 +166,7 @@ def decode_access_token(token: str) -> TokenData:
     """Decode and validate a JWT access token."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username: str | None = payload.get("sub")
         if username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -175,12 +176,12 @@ def decode_access_token(token: str) -> TokenData:
         roles_str = payload.get("roles", [])
         roles = [Role(r) for r in roles_str]
         return TokenData(username=username, roles=roles)
-    except JWTError:
+    except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from e
 
 
 def validate_api_key(api_key: str) -> APIKey | None:
@@ -217,7 +218,7 @@ async def get_current_user(
     # Try JWT bearer token
     if bearer_token:
         token_data = decode_access_token(bearer_token.credentials)
-        user = get_user(token_data.username)
+        user = get_user(token_data.username or "")
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -247,7 +248,7 @@ def has_permission(user: User, permission: str) -> bool:
     return False
 
 
-def require_permission(permission: str):
+def require_permission(permission: str) -> Callable[..., Awaitable[User]]:
     """Dependency to require a specific permission."""
 
     async def check_permission(user: User = Depends(get_current_user)) -> User:
@@ -288,10 +289,11 @@ def requires(permission: str) -> params.Depends:
                 detail=f"Permission denied: {permission} required",
             )
 
-    return Depends(check)
+    dependency: params.Depends = Depends(check)
+    return dependency
 
 
-def require_role(role: Role):
+def require_role(role: Role) -> Callable[..., Awaitable[User]]:
     """Dependency to require a specific role."""
 
     async def check_role(user: User = Depends(get_current_user)) -> User:

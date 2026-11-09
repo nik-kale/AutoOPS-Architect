@@ -1,5 +1,6 @@
 """LLM response caching to reduce costs and improve latency."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -214,18 +215,14 @@ class FilesystemCacheBackend(CacheBackend):
     async def delete(self, key: str) -> None:
         """Delete from filesystem cache."""
         file_path = self._get_file_path(key)
-        try:
+        with contextlib.suppress(OSError):
             file_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     async def clear(self) -> None:
         """Clear all cache files."""
         for file_path in self.cache_path.glob("*.json"):
-            try:
+            with contextlib.suppress(OSError):
                 file_path.unlink()
-            except OSError:
-                pass
 
     async def size(self) -> int:
         """Get number of cache files."""
@@ -261,8 +258,10 @@ class RedisCacheBackend(CacheBackend):
         if self._redis is None:
             try:
                 import redis.asyncio as redis
-            except ImportError:
-                raise ImportError("Redis package not installed. Install with: pip install redis")
+            except ImportError as e:
+                raise ImportError(
+                    "Redis package not installed. Install with: pip install redis"
+                ) from e
 
             redis_url = self.config.redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
             self._redis = redis.from_url(redis_url, decode_responses=True)
@@ -276,7 +275,8 @@ class RedisCacheBackend(CacheBackend):
             data = await redis_client.get(f"autoops:llm:{key}")
             if data is None:
                 return None
-            return json.loads(data)
+            loaded: dict[str, Any] = json.loads(data)
+            return loaded
         except Exception:
             return None
 
@@ -297,10 +297,8 @@ class RedisCacheBackend(CacheBackend):
     async def delete(self, key: str) -> None:
         """Delete from Redis cache."""
         redis_client = self._get_redis()
-        try:
+        with contextlib.suppress(Exception):
             await redis_client.delete(f"autoops:llm:{key}")
-        except Exception:
-            pass
 
     async def clear(self) -> None:
         """Clear all LLM cache entries in Redis."""

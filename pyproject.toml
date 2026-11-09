@@ -123,6 +123,11 @@ plugins = ["pydantic.mypy"]
 module = ["openai", "openai.*", "anthropic", "anthropic.*", "redis", "redis.*"]
 ignore_missing_imports = true
 
+# APScheduler 3.x ships no type information.
+[[tool.mypy.overrides]]
+module = ["apscheduler", "apscheduler.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -348,7 +348,7 @@ class Architect:
                 )
                 nodes.append(node)
             except Exception as e:
-                raise ValueError(f"Invalid node data: {node_data}. Error: {e}")
+                raise ValueError(f"Invalid node data: {node_data}. Error: {e}") from e
 
         # Parse edges
         edges = []
@@ -361,7 +361,7 @@ class Architect:
                 )
                 edges.append(edge)
             except Exception as e:
-                raise ValueError(f"Invalid edge data: {edge_data}. Error: {e}")
+                raise ValueError(f"Invalid edge data: {edge_data}. Error: {e}") from e
 
         # Create the workflow
         workflow = WorkflowGraph(
@@ -460,17 +460,18 @@ but incorporate the requested changes. Respond with the complete updated workflo
 
         # Check that all approval-required nodes are marked correctly
         for node in workflow.nodes:
-            if node.type in {
-                NodeType.SERVICE_RESTART,
-                NodeType.CONFIG_UPDATE,
-                NodeType.ROLLBACK,
-                NodeType.SCALE_ACTION,
-                NodeType.CUSTOM_SCRIPT,
-            }:
-                if not node.requires_human_approval:
-                    issues.append(
-                        f"Node '{node.id}' ({node.type.value}) should require human approval"
-                    )
+            if (
+                node.type
+                in {
+                    NodeType.SERVICE_RESTART,
+                    NodeType.CONFIG_UPDATE,
+                    NodeType.ROLLBACK,
+                    NodeType.SCALE_ACTION,
+                    NodeType.CUSTOM_SCRIPT,
+                }
+                and not node.requires_human_approval
+            ):
+                issues.append(f"Node '{node.id}' ({node.type.value}) should require human approval")
 
         return issues
 
@@ -576,17 +577,20 @@ but incorporate the requested changes. Respond with the complete updated workflo
                     score += 1
 
             # Check for specific keywords
-            if "5xx" in goal_lower or "error" in goal_lower:
-                if "error" in template.category or "error" in str(template.tags):
-                    score += 3
+            if ("5xx" in goal_lower or "error" in goal_lower) and (
+                "error" in template.category or "error" in str(template.tags)
+            ):
+                score += 3
 
-            if "latency" in goal_lower or "slow" in goal_lower:
-                if "performance" in template.category or "latency" in str(template.tags):
-                    score += 3
+            if ("latency" in goal_lower or "slow" in goal_lower) and (
+                "performance" in template.category or "latency" in str(template.tags)
+            ):
+                score += 3
 
-            if "auth" in goal_lower or "login" in goal_lower:
-                if "security" in template.category or "auth" in str(template.tags):
-                    score += 3
+            if ("auth" in goal_lower or "login" in goal_lower) and (
+                "security" in template.category or "auth" in str(template.tags)
+            ):
+                score += 3
 
             if score > best_score:
                 best_score = score

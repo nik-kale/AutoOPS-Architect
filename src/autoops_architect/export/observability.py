@@ -383,9 +383,9 @@ class MetricsExporter:
                 lines.append(f"{key}_sum {sum(values)}")
 
         # Gauges
-        for key, value in self._gauges.items():
+        for key, gauge in self._gauges.items():
             lines.append(f"# TYPE {key.split('{')[0]} gauge")
-            lines.append(f"{key} {value}")
+            lines.append(f"{key} {gauge}")
 
         return "\n".join(lines)
 
@@ -426,7 +426,7 @@ def get_metrics() -> MetricsExporter:
 
 
 def record_workflow_execution(
-    workflow_id: str,
+    workflow_id: str,  # noqa: ARG001 - public signature, too high-cardinality for a label
     status: str,
     duration_seconds: float,
     node_count: int,

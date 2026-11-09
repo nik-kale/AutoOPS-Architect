@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from autoops_architect.api.auth import requires
 from autoops_architect.api.models import TemplateResponse, WorkflowResponse
 from autoops_architect.api.routes.workflows import _active_workflows, _workflow_to_response
+from autoops_architect.models.workflow import Node
 from autoops_architect.templates.registry import create_default_template_registry
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -39,7 +40,7 @@ async def list_templates(
     ]
 
 
-def _extract_template_variables(nodes: list) -> list[str]:
+def _extract_template_variables(nodes: list[Node]) -> list[str]:
     """Extract variable names from template nodes."""
     variables = set()
     pattern = r"\{\{(\w+)\}\}"
@@ -57,7 +58,7 @@ def _extract_template_variables(nodes: list) -> list[str]:
 async def list_categories() -> list[str]:
     """List all template categories."""
     templates = _template_registry.list()
-    categories = sorted(set(t.category for t in templates))
+    categories = sorted({t.category for t in templates})
     return categories
 
 
@@ -157,7 +158,7 @@ async def instantiate_template(
         raise HTTPException(
             status_code=400,
             detail=f"Failed to instantiate template: {str(e)}",
-        )
+        ) from e
 
     # Store the workflow
     _active_workflows[workflow.id] = workflow

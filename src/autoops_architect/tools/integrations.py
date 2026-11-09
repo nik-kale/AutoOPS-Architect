@@ -16,7 +16,6 @@ import httpx
 
 from autoops_architect.tools.base import Tool, ToolConfig, ToolResult
 
-
 _TIMEFRAME_UNIT_SECONDS = {"m": 60, "h": 3600, "d": 86400}
 
 
@@ -100,7 +99,7 @@ class AutoRCATool(Tool):
         # Extract symptoms from context if not provided
         symptoms = params.get("symptoms", [])
         if not symptoms and context:
-            for node_id, outputs in context.items():
+            for _node_id, outputs in context.items():
                 if isinstance(outputs, dict) and "findings" in outputs:
                     for finding in outputs["findings"]:
                         if isinstance(finding, dict):
@@ -153,7 +152,8 @@ class AutoRCATool(Tool):
                 headers=headers,
             )
             response.raise_for_status()
-            return response.json()
+            analysis: dict[str, Any] = response.json()
+            return analysis
 
     def _extract_relevant_context(self, context: dict[str, Any]) -> dict[str, Any]:
         """Extract relevant information from workflow context."""
@@ -370,13 +370,14 @@ class MCPTool(Tool):
                 headers=headers,
             )
             response.raise_for_status()
-            result = response.json()
+            result: dict[str, Any] = response.json()
 
             # Handle MCP protocol response
             if "error" in result:
                 raise Exception(result["error"].get("message", "Unknown MCP error"))
 
-            return result.get("result", result)
+            payload_result: dict[str, Any] = result.get("result", result)
+            return payload_result
 
     def _enrich_arguments(
         self,
@@ -390,7 +391,7 @@ class MCPTool(Tool):
         # If creating a ticket/issue, add summary from context
         if action in ("create_issue", "create_ticket") and "summary" not in enriched:
             # Look for RCA results or findings
-            for node_id, outputs in context.items():
+            for _node_id, outputs in context.items():
                 if isinstance(outputs, dict):
                     if "root_cause" in outputs:
                         enriched["summary"] = outputs["root_cause"].get(
@@ -411,7 +412,7 @@ class MCPTool(Tool):
         """Format workflow context as a notification message."""
         lines = ["AutoOps Workflow Update", ""]
 
-        for node_id, outputs in context.items():
+        for _node_id, outputs in context.items():
             if isinstance(outputs, dict):
                 if "summary" in outputs:
                     lines.append(f"- {outputs['summary']}")
@@ -540,29 +541,28 @@ class MCPTool(Tool):
     def _mock_github_action(
         self,
         action: str,
-        arguments: dict[str, Any],
+        _arguments: dict[str, Any],
     ) -> dict[str, Any]:
         """Generate mock GitHub action result."""
-        if action == "create_issue":
-            return {
+        responses: dict[str, dict[str, Any]] = {
+            "create_issue": {
                 "status": "success",
                 "issue_number": 42,
                 "issue_url": "https://github.com/org/repo/issues/42",
-            }
-        elif action == "create_pr":
-            return {
+            },
+            "create_pr": {
                 "status": "success",
                 "pr_number": 123,
                 "pr_url": "https://github.com/org/repo/pull/123",
-            }
-        elif action == "get_workflow_runs":
-            return {
+            },
+            "get_workflow_runs": {
                 "status": "success",
                 "runs": [
                     {"id": 1, "status": "completed", "conclusion": "success"},
                 ],
-            }
-        return {"status": "mock", "action": action}
+            },
+        }
+        return responses.get(action, {"status": "mock", "action": action})
 
     def _mock_opsgenie_action(
         self,
@@ -658,7 +658,7 @@ class BrowserMissionTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Execute a browser mission."""
         if not self.config.enabled:
@@ -750,7 +750,7 @@ class BrowserMissionTool(Tool):
                     headers=headers,
                 )
                 status_response.raise_for_status()
-                status = status_response.json()
+                status: dict[str, Any] = status_response.json()
 
                 if status.get("status") in ("completed", "failed", "timeout"):
                     return status
@@ -908,7 +908,7 @@ class DatadogTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Execute a Datadog query."""
         if not self.config.enabled:
@@ -923,7 +923,7 @@ class DatadogTool(Tool):
 
         if not self.api_key or not self.app_key:
             # Return mock data
-            result = self._generate_mock_result(action, query, timeframe)
+            result = self._generate_mock_result(action, query)
             result["_mock"] = True
             result["_message"] = "DATADOG_API_KEY or DATADOG_APP_KEY not set"
             return ToolResult.success(
@@ -992,13 +992,13 @@ class DatadogTool(Tool):
                 )
 
             response.raise_for_status()
-            return response.json()
+            body: dict[str, Any] = response.json()
+            return body
 
     def _generate_mock_result(
         self,
         action: str,
         query: str,
-        timeframe: str,
     ) -> dict[str, Any]:
         """Generate mock Datadog results."""
         if action == "query_metrics":

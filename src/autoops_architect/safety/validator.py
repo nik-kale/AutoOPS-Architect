@@ -1,14 +1,14 @@
 """Safety validation for workflows and nodes."""
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from autoops_architect.models.workflow import Node, WorkflowGraph
 from autoops_architect.safety.config import SafetyConfig, get_safety_config
 
 
-class ValidationSeverity(str, Enum):
+class ValidationSeverity(StrEnum):
     """Severity level for validation issues."""
 
     ERROR = "error"  # Must be fixed, blocks execution
@@ -193,22 +193,16 @@ class SafetyValidator:
             result.add_error(f"Node type '{node_type}' is not allowed", node_id=node.id)
 
         # Check if node type requires approval
-        if self.config.node_types.requires_approval(node_type):
-            if not node.requires_human_approval:
-                result.add_warning(
-                    f"Node type '{node_type}' should require approval", node_id=node.id
-                )
+        if self.config.node_types.requires_approval(node_type) and not node.requires_human_approval:
+            result.add_warning(f"Node type '{node_type}' should require approval", node_id=node.id)
 
         # Check tool
         if node.tool:
             if not self.config.tools.is_allowed(node.tool):
                 result.add_error(f"Tool '{node.tool}' is not allowed", node_id=node.id)
 
-            if self.config.tools.requires_approval(node.tool):
-                if not node.requires_human_approval:
-                    result.add_warning(
-                        f"Tool '{node.tool}' should require approval", node_id=node.id
-                    )
+            if self.config.tools.requires_approval(node.tool) and not node.requires_human_approval:
+                result.add_warning(f"Tool '{node.tool}' should require approval", node_id=node.id)
 
         # Validate parameters
         param_result = self.validate_params(node.params, node.id)
@@ -297,15 +291,14 @@ class SafetyValidator:
             self.config.approval.require_for_production
             and environment
             and environment.lower() in ("production", "prod")
+        ) and node.type.value in (
+            "service_restart",
+            "config_update",
+            "rollback",
+            "scale_action",
+            "custom_script",
         ):
-            if node.type.value in (
-                "service_restart",
-                "config_update",
-                "rollback",
-                "scale_action",
-                "custom_script",
-            ):
-                return True
+            return True
 
         # Check node's own flag
         if node.requires_human_approval:
@@ -316,10 +309,7 @@ class SafetyValidator:
             return True
 
         # Check tool
-        if node.tool and self.config.tools.requires_approval(node.tool):
-            return True
-
-        return False
+        return bool(node.tool and self.config.tools.requires_approval(node.tool))
 
 
 def validate_workflow(

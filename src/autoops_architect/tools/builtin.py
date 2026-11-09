@@ -90,7 +90,7 @@ class LogCollectorTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Collect logs from the specified service."""
         service = params.get("service", "unknown")
@@ -109,8 +109,8 @@ class LogCollectorTool(Tool):
                 "level": level,
                 "query": query,
                 "log_count": len(log_entries),
-                "error_count": sum(1 for l in log_entries if l["level"] == "error"),
-                "warn_count": sum(1 for l in log_entries if l["level"] == "warn"),
+                "error_count": sum(1 for entry in log_entries if entry["level"] == "error"),
+                "warn_count": sum(1 for entry in log_entries if entry["level"] == "warn"),
                 "logs": log_entries[:10],  # Return first 10 for display
             },
             raw_output=self._format_logs(log_entries),
@@ -203,7 +203,7 @@ class MetricQueryTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Query metrics from monitoring system."""
         service = params.get("service", "unknown")
@@ -306,7 +306,7 @@ class TraceCollectorTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         """Collect traces from the specified service."""
         service = params.get("service", "unknown")
@@ -434,7 +434,7 @@ class TraceCollectorTool(Tool):
         total_duration = random.uniform(200, 1500)
 
         spans = []
-        current_offset = 0
+        current_offset = 0.0
 
         span_templates = [
             ("http.request", service, 0),
@@ -466,7 +466,7 @@ class TraceCollectorTool(Tool):
             "duration_ms": round(total_duration, 2),
             "root_service": service,
             "spans": spans,
-            "services_involved": list(set(s["service"] for s in spans)),
+            "services_involved": list({s["service"] for s in spans}),
         }
 
     def _percentile(self, values: list[float], percentile: int) -> float:
@@ -582,13 +582,13 @@ class AnalysisTool(Tool):
         metric_data = None
 
         if context:
-            for node_id, outputs in context.items():
+            for _node_id, outputs in context.items():
                 if "logs" in outputs:
                     log_data = outputs.get("logs", [])
                 if "metrics" in outputs:
                     metric_data = outputs.get("metrics")
 
-        findings = self._analyze(log_data, metric_data, analysis_type)
+        findings = self._analyze(log_data, metric_data)
 
         return ToolResult.success(
             outputs={
@@ -602,15 +602,14 @@ class AnalysisTool(Tool):
 
     def _analyze(
         self,
-        log_data: list | None,
-        metric_data: dict | None,
-        analysis_type: str,
+        log_data: list[dict[str, Any]] | None,
+        metric_data: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
         """Perform analysis on the data."""
         findings = []
 
         if log_data:
-            error_logs = [l for l in log_data if l.get("level") == "error"]
+            error_logs = [entry for entry in log_data if entry.get("level") == "error"]
             if error_logs:
                 findings.append(
                     {
@@ -621,7 +620,7 @@ class AnalysisTool(Tool):
                     }
                 )
 
-            warn_logs = [l for l in log_data if l.get("level") == "warn"]
+            warn_logs = [entry for entry in log_data if entry.get("level") == "warn"]
             if warn_logs:
                 findings.append(
                     {

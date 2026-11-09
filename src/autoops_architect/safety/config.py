@@ -71,9 +71,7 @@ class ToolSafety(BaseModel):
         """Check if a tool is allowed."""
         if tool_id in self.blocked:
             return False
-        if self.allowed and tool_id not in self.allowed:
-            return False
-        return True
+        return not (self.allowed and tool_id not in self.allowed)
 
     def requires_approval(self, tool_id: str) -> bool:
         """Check if a tool requires approval."""
@@ -123,9 +121,7 @@ class NodeTypeSafety(BaseModel):
         """Check if a node type is allowed."""
         if node_type in self.blocked:
             return False
-        if self.allowed and node_type not in self.allowed:
-            return False
-        return True
+        return not (self.allowed and node_type not in self.allowed)
 
     def requires_approval(self, node_type: str) -> bool:
         """Check if a node type requires approval."""
@@ -174,10 +170,7 @@ class NetworkSafety(BaseModel):
 
         # If whitelist is specified, host must match
         if self.allowed_hosts:
-            for pattern in self.allowed_hosts:
-                if fnmatch.fnmatch(host, pattern):
-                    return True
-            return False
+            return any(fnmatch.fnmatch(host, pattern) for pattern in self.allowed_hosts)
 
         return True
 

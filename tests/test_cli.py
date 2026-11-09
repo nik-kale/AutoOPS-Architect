@@ -88,7 +88,7 @@ class TestRunCommand:
 
         path = write_workflow(tmp_path / "wf.json")
 
-        def no_timing(self: WorkflowExecutor, workflow: WorkflowGraph) -> WorkflowRunResult:
+        def no_timing(_self: WorkflowExecutor, workflow: WorkflowGraph) -> WorkflowRunResult:
             return WorkflowRunResult(
                 workflow_id=workflow.id,
                 goal_description=workflow.goal_description,

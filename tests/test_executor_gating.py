@@ -33,7 +33,9 @@ class RecordingTool(Tool):
         return "Records calls"
 
     async def execute(
-        self, params: dict[str, Any], context: dict[str, Any] | None = None
+        self,
+        params: dict[str, Any],
+        context: dict[str, Any] | None = None,  # noqa: ARG002 - Tool interface
     ) -> ToolResult:
         self.calls.append(params)
         if self._fail:

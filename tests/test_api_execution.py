@@ -123,10 +123,23 @@ class TestExecution:
         assert '"event_type":"workflow_completed"' in stream.text
         assert "stream_end" in stream.text
 
+    def test_execution_is_not_visible_under_another_workflow(self, client: TestClient) -> None:
+        workflow = create_from_template(client)
+        started = client.post(
+            f"/api/v1/workflows/{workflow['id']}/execute", params={"dry_run": True}
+        )
+        execution_id = started.json()["execution_id"]
+
+        status = client.get(f"/api/v1/workflows/other-workflow/execute/{execution_id}")
+        stream = client.get(f"/api/v1/workflows/other-workflow/execute/{execution_id}/stream")
+
+        assert status.status_code == 404
+        assert stream.status_code == 404
+
     def test_executor_crash_marks_execution_failed(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def crash(self: WorkflowExecutor, workflow: WorkflowGraph) -> None:
+        async def crash(_self: WorkflowExecutor, _workflow: WorkflowGraph) -> None:
             raise RuntimeError("executor exploded")
 
         monkeypatch.setattr(WorkflowExecutor, "execute", crash)

@@ -4,13 +4,13 @@ import hashlib
 import hmac
 import re
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class WebhookSource(str, Enum):
+class WebhookSource(StrEnum):
     """Supported webhook sources."""
 
     PAGERDUTY = "pagerduty"
@@ -109,7 +109,7 @@ def extract_field_value(payload: dict[str, Any], jsonpath: str) -> Any:
         return None
 
     path = jsonpath[2:]  # Remove $.
-    current = payload
+    current: Any = payload
 
     for part in path.split("."):
         if "[" in part:

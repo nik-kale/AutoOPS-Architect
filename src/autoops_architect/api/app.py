@@ -23,7 +23,7 @@ from autoops_architect.metrics import get_metrics
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup
     print("AutoOps Architect API starting...")

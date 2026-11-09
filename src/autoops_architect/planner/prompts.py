@@ -2,6 +2,9 @@
 
 from jinja2 import Template
 
+from autoops_architect.models.goal import Goal
+from autoops_architect.models.memory import MemoryEntry
+
 SYSTEM_PROMPT = """You are AutoOps Architect, an expert SRE and operations automation system.
 
 Your job is to analyze operations goals and generate executable workflow graphs that investigate, diagnose, and remediate incidents.
@@ -146,8 +149,8 @@ Generate the workflow now:
 
 
 def format_planning_prompt(
-    goal: "Goal",  # type: ignore[name-defined]
-    similar_workflows: list | None = None,
+    goal: Goal,
+    similar_workflows: list[MemoryEntry] | None = None,
     available_tools: list[str] | None = None,
     constraints: list[str] | None = None,
 ) -> str:
@@ -165,11 +168,13 @@ def format_planning_prompt(
     """
     template = Template(PLANNING_PROMPT_TEMPLATE)
 
-    return template.render(
-        goal=goal,
-        similar_workflows=similar_workflows or [],
-        available_tools=available_tools,
-        constraints=constraints or [],
+    return str(
+        template.render(
+            goal=goal,
+            similar_workflows=similar_workflows or [],
+            available_tools=available_tools,
+            constraints=constraints or [],
+        )
     )
 
 
