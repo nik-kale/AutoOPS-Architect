@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from autoops_architect.api.routes.workflows import _active_workflows
 from autoops_architect.models.goal import Environment, Goal
 from autoops_architect.planner.architect import Architect
 from autoops_architect.scheduler import (
@@ -52,7 +53,13 @@ async def execute_scheduled_workflow(schedule_id: str) -> None:
 
         # Plan workflow
         architect = Architect()
-        workflow = await architect.plan(goal)
+        if schedule.template_id:
+            workflow = architect.plan_from_template(schedule.template_id, goal)
+        else:
+            workflow = await architect.plan(goal)
+
+        # Keep it so the planned run can be reviewed and executed through the API
+        _active_workflows[workflow.id] = workflow
 
         # Record execution
         record_execution(
@@ -88,9 +95,11 @@ async def create_schedule(request: CreateScheduleRequest) -> Schedule:
 
     try:
         add_schedule(schedule, execute_scheduled_workflow)
-        return schedule
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except (ValueError, LookupError) as e:
+        # An unknown timezone raises ZoneInfoNotFoundError, a LookupError
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return schedule
 
 
 @router.get("")

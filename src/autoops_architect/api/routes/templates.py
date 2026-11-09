@@ -52,6 +52,57 @@ def _extract_template_variables(nodes: list) -> list[str]:
     return sorted(variables)
 
 
+@router.get("/categories", response_model=list[str])
+async def list_categories() -> list[str]:
+    """List all template categories."""
+    templates = _template_registry.list()
+    categories = sorted(set(t.category for t in templates))
+    return categories
+
+
+@router.get("/search", response_model=list[TemplateResponse])
+async def search_templates(
+    q: str = Query(..., min_length=2, description="Search query"),
+) -> list[TemplateResponse]:
+    """
+    Search templates by keyword.
+
+    Searches template names, descriptions, and tags.
+    """
+    templates = _template_registry.list()
+    query_lower = q.lower()
+
+    results = []
+    for t in templates:
+        # Score each template based on matches
+        score = 0
+        if query_lower in t.name.lower():
+            score += 3
+        if query_lower in t.description.lower():
+            score += 2
+        for tag in t.tags:
+            if query_lower in tag.lower():
+                score += 1
+
+        if score > 0:
+            results.append((score, t))
+
+    # Sort by score descending
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    return [
+        TemplateResponse(
+            id=t.id,
+            name=t.name,
+            description=t.description,
+            category=t.category,
+            tags=t.tags,
+            variables=_extract_template_variables(t.nodes),
+        )
+        for _, t in results
+    ]
+
+
 @router.get("/{template_id}", response_model=TemplateResponse)
 async def get_template(template_id: str) -> TemplateResponse:
     """Get a specific template by ID."""
@@ -102,54 +153,3 @@ async def instantiate_template(
     _active_workflows[workflow.id] = workflow
 
     return _workflow_to_response(workflow)
-
-
-@router.get("/categories", response_model=list[str])
-async def list_categories() -> list[str]:
-    """List all template categories."""
-    templates = _template_registry.list()
-    categories = sorted(set(t.category for t in templates))
-    return categories
-
-
-@router.get("/search", response_model=list[TemplateResponse])
-async def search_templates(
-    q: str = Query(..., min_length=2, description="Search query"),
-) -> list[TemplateResponse]:
-    """
-    Search templates by keyword.
-
-    Searches template names, descriptions, and tags.
-    """
-    templates = _template_registry.list()
-    query_lower = q.lower()
-
-    results = []
-    for t in templates:
-        # Score each template based on matches
-        score = 0
-        if query_lower in t.name.lower():
-            score += 3
-        if query_lower in t.description.lower():
-            score += 2
-        for tag in t.tags:
-            if query_lower in tag.lower():
-                score += 1
-
-        if score > 0:
-            results.append((score, t))
-
-    # Sort by score descending
-    results.sort(key=lambda x: x[0], reverse=True)
-
-    return [
-        TemplateResponse(
-            id=t.id,
-            name=t.name,
-            description=t.description,
-            category=t.category,
-            tags=t.tags,
-            variables=_extract_template_variables(t.nodes),
-        )
-        for _, t in results
-    ]

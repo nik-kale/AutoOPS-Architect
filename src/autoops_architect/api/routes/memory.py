@@ -76,6 +76,43 @@ async def search_memory(
     ]
 
 
+@router.get("/stats", response_model=dict)
+async def get_memory_stats() -> dict:
+    """Get memory statistics."""
+    backend = _get_backend()
+    entries = backend.list_entries(limit=1000)
+
+    if not entries:
+        return {
+            "total_entries": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "success_rate": 0,
+            "services": [],
+            "environments": [],
+        }
+
+    success_count = sum(1 for e in entries if e.outcome_status == "success")
+    failure_count = sum(1 for e in entries if e.outcome_status == "failed")
+
+    # Collect unique services and environments
+    services = set()
+    environments = set()
+    for e in entries:
+        services.update(e.services)
+        if e.environment:
+            environments.add(e.environment)
+
+    return {
+        "total_entries": len(entries),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "success_rate": success_count / len(entries),
+        "services": sorted(services),
+        "environments": sorted(environments),
+    }
+
+
 @router.get("/{entry_id}", response_model=MemoryEntryResponse)
 async def get_memory_entry(entry_id: str) -> MemoryEntryResponse:
     """Get a specific memory entry by ID."""
@@ -109,39 +146,3 @@ async def delete_memory_entry(entry_id: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Memory entry not found")
 
     return {"status": "deleted", "entry_id": entry_id}
-
-
-@router.get("/stats", response_model=dict)
-async def get_memory_stats() -> dict:
-    """Get memory statistics."""
-    backend = _get_backend()
-    entries = backend.list_entries(limit=1000)
-
-    if not entries:
-        return {
-            "total_entries": 0,
-            "success_count": 0,
-            "failure_count": 0,
-            "services": [],
-            "environments": [],
-        }
-
-    success_count = sum(1 for e in entries if e.outcome_status == "success")
-    failure_count = sum(1 for e in entries if e.outcome_status == "failure")
-
-    # Collect unique services and environments
-    services = set()
-    environments = set()
-    for e in entries:
-        services.update(e.services)
-        if e.environment:
-            environments.add(e.environment)
-
-    return {
-        "total_entries": len(entries),
-        "success_count": success_count,
-        "failure_count": failure_count,
-        "success_rate": success_count / len(entries) if entries else 0,
-        "services": sorted(services),
-        "environments": sorted(environments),
-    }

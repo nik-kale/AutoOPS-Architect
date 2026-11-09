@@ -1,5 +1,6 @@
 """Template registry and template model definitions."""
 
+import builtins
 from datetime import datetime
 from typing import Any
 
@@ -157,8 +158,8 @@ class TemplateRegistry:
         self,
         query: str | None = None,
         category: str | None = None,
-        tags: list[str] | None = None,
-    ) -> list[WorkflowTemplate]:
+        tags: builtins.list[str] | None = None,
+    ) -> builtins.list[WorkflowTemplate]:
         """
         Search templates by query, category, or tags.
 
@@ -189,7 +190,7 @@ class TemplateRegistry:
 
         return results
 
-    def list_categories(self) -> list[str]:
+    def list_categories(self) -> builtins.list[str]:
         """Get all unique categories."""
         categories = set(t.category for t in self._templates.values())
         return sorted(categories)

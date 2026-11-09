@@ -5,11 +5,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from autoops_architect.api.models import HealthResponse
-from autoops_architect.api.routes import memory_router, templates_router, workflows_router
-from autoops_architect.api.routes.schedules import router as schedules_router
+from autoops_architect.api.routes import (
+    auth_router,
+    memory_router,
+    schedules_router,
+    templates_router,
+    workflows_router,
+)
+from autoops_architect.metrics import get_metrics
 
 # Package version
 __version__ = "0.1.0"
@@ -67,10 +73,18 @@ def create_app(
     )
 
     # Include routers
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
     app.include_router(schedules_router, prefix="/api/v1")
+
+    # Metrics endpoint
+    @app.get("/metrics", include_in_schema=False, tags=["system"])
+    async def metrics() -> Response:
+        """Prometheus metrics endpoint."""
+        content, content_type = get_metrics()
+        return Response(content=content, media_type=content_type)
 
     # Health check endpoint
     @app.get("/health", response_model=HealthResponse, tags=["system"])

@@ -20,11 +20,12 @@ from autoops_architect.api.models import (
     WorkflowResponse,
     WorkflowUpdateRequest,
 )
-from autoops_architect.executor.engine import WorkflowExecutor
+from autoops_architect.executor.engine import ExecutorConfig, WorkflowExecutor
+from autoops_architect.models.execution import ExecutionStatus as NodeExecutionStatus
+from autoops_architect.models.execution import NodeResult
 from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
-from autoops_architect.tools import get_default_tools
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -46,6 +47,13 @@ def get_auth_dependency():
 
         return no_auth
 
+
+_NODE_EVENT_TYPES = {
+    NodeExecutionStatus.RUNNING: "node_started",
+    NodeExecutionStatus.SUCCESS: "node_completed",
+    NodeExecutionStatus.FAILED: "node_failed",
+    NodeExecutionStatus.SKIPPED: "node_skipped",
+}
 
 # In-memory storage for active workflows and executions
 # In production, this would be backed by a database
@@ -104,14 +112,14 @@ async def create_workflow(
     Requires: execute:workflows permission (if auth enabled)
     """
     # Build the Goal object
-    environment = None
+    environment = Environment.UNKNOWN
     if request.environment:
         try:
             environment = Environment(request.environment.lower())
         except ValueError:
             pass
 
-    priority = None
+    priority = Priority.UNKNOWN
     if request.priority:
         try:
             priority = Priority(request.priority.lower())
@@ -123,7 +131,7 @@ async def create_workflow(
         services=request.services,
         environment=environment,
         priority=priority,
-        time_window=request.time_window,
+        context=f"Time window: {request.time_window}" if request.time_window else None,
     )
 
     # Create the architect and generate the workflow
@@ -252,39 +260,31 @@ async def execute_workflow(
 
     # Start execution in background
     async def run_execution() -> None:
-        _active_executions[execution_id]["status"] = ExecutionStatus.RUNNING
-        tools = get_default_tools()
-        executor = WorkflowExecutor(tools=tools)
+        execution = _active_executions[execution_id]
+        execution["status"] = ExecutionStatus.RUNNING
 
-        disabled_nodes = workflow.metadata.get("disabled_nodes", [])
+        def on_status_change(
+            node_id: str, status: NodeExecutionStatus, _result: NodeResult | None = None
+        ) -> None:
+            if status not in _NODE_EVENT_TYPES:
+                return
 
-        def on_node_start(node_id: str) -> None:
             node = workflow.get_node(node_id)
-            event = NodeExecutionEvent(
-                event_type="node_started",
-                node_id=node_id,
-                node_name=node.name if node else node_id,
-                status="running",
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type=_NODE_EVENT_TYPES[status],
+                    node_id=node_id,
+                    node_name=node.name if node else node_id,
+                    status=status.value,
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
-
-        def on_node_complete(node_id: str, result: Any) -> None:
-            node = workflow.get_node(node_id)
-            event = NodeExecutionEvent(
-                event_type="node_completed",
-                node_id=node_id,
-                node_name=node.name if node else node_id,
-                status="completed",
-                result={"success": True},
-            )
-            _active_executions[execution_id]["events"].append(event)
-            _active_executions[execution_id]["node_results"].append(
-                {"node_id": node_id, "status": "success"}
-            )
+            if status != NodeExecutionStatus.RUNNING:
+                execution["node_results"].append({"node_id": node_id, "status": status.value})
 
         try:
             # Filter out disabled nodes
             filtered_workflow = workflow
+            disabled_nodes = workflow.metadata.get("disabled_nodes", [])
             if disabled_nodes:
                 filtered_workflow = WorkflowGraph(
                     id=workflow.id,
@@ -300,36 +300,35 @@ async def execute_workflow(
                     metadata=workflow.metadata,
                 )
 
-            result = await executor.execute(
-                workflow=filtered_workflow,
-                dry_run=dry_run,
-            )
+            executor = WorkflowExecutor(config=ExecutorConfig(dry_run=dry_run))
+            executor.add_status_callback(on_status_change)
+            result = await executor.execute(filtered_workflow)
 
-            _active_executions[execution_id]["status"] = (
+            execution["status"] = (
                 ExecutionStatus.COMPLETED
-                if result.overall_status.value == "success"
+                if result.overall_status == NodeExecutionStatus.SUCCESS
                 else ExecutionStatus.FAILED
             )
-            _active_executions[execution_id]["completed_at"] = datetime.utcnow()
-            _active_executions[execution_id]["summary"] = result.summary
-
-            # Add completion event
-            event = NodeExecutionEvent(
-                event_type="workflow_completed",
-                status=_active_executions[execution_id]["status"].value,
-                message=result.summary,
+            execution["completed_at"] = datetime.utcnow()
+            execution["summary"] = result.summary
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type="workflow_completed",
+                    status=execution["status"].value,
+                    message=result.summary,
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
 
         except Exception as e:
-            _active_executions[execution_id]["status"] = ExecutionStatus.FAILED
-            _active_executions[execution_id]["completed_at"] = datetime.utcnow()
-            event = NodeExecutionEvent(
-                event_type="workflow_failed",
-                status="failed",
-                message=str(e),
+            execution["status"] = ExecutionStatus.FAILED
+            execution["completed_at"] = datetime.utcnow()
+            execution["events"].append(
+                NodeExecutionEvent(
+                    event_type="workflow_failed",
+                    status="failed",
+                    message=str(e),
+                )
             )
-            _active_executions[execution_id]["events"].append(event)
 
     background_tasks.add_task(run_execution)
 
@@ -410,6 +409,7 @@ async def get_execution_status(
 
     success_count = sum(1 for r in execution["node_results"] if r.get("status") == "success")
     failed_count = sum(1 for r in execution["node_results"] if r.get("status") == "failed")
+    skipped_count = sum(1 for r in execution["node_results"] if r.get("status") == "skipped")
 
     return ExecutionResponse(
         execution_id=execution_id,
@@ -421,5 +421,5 @@ async def get_execution_status(
         summary=execution.get("summary"),
         success_count=success_count,
         failed_count=failed_count,
-        skipped_count=0,
+        skipped_count=skipped_count,
     )

@@ -18,6 +18,7 @@ class GoalRequest(BaseModel):
     )
     services: list[str] = Field(
         default_factory=list,
+        max_length=50,
         description="List of affected services",
     )
     environment: str | None = Field(
@@ -34,6 +35,7 @@ class GoalRequest(BaseModel):
     )
     constraints: list[str] = Field(
         default_factory=list,
+        max_length=20,
         description="Additional constraints for workflow generation",
     )
     use_template: str | None = Field(
