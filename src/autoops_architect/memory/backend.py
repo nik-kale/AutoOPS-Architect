@@ -4,8 +4,11 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -183,8 +186,17 @@ class JSONMemoryBackend(MemoryBackend):
                     pref = UserPreference.model_validate(pref_data)
                     self._preferences.preferences[pref.key] = pref
 
-            except (json.JSONDecodeError, Exception):
-                # Start fresh if file is corrupted
+            except (ValueError, TypeError, AttributeError, OSError) as e:
+                # Start fresh, but keep the unreadable file: the next save would
+                # otherwise overwrite it and lose the history for good.
+                backup_path = self.file_path.with_name(f"{self.file_path.name}.corrupt")
+                logger.warning(
+                    "Could not read memory file %s (%s); moved it to %s",
+                    self.file_path,
+                    e,
+                    backup_path,
+                )
+                os.replace(self.file_path, backup_path)
                 self._entries = {}
                 self._preferences = PreferenceStore()
 
@@ -199,8 +211,18 @@ class JSONMemoryBackend(MemoryBackend):
             ],
         }
 
-        with open(self.file_path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        # Write-then-rename so a crash cannot truncate the history. mkstemp creates
+        # the file readable only by its owner, and goals and outputs can be sensitive.
+        fd, temp_path = tempfile.mkstemp(
+            dir=self.file_path.parent, prefix=f".{self.file_path.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2, default=str)
+            os.replace(temp_path, self.file_path)
+        except BaseException:
+            Path(temp_path).unlink(missing_ok=True)
+            raise
 
     def save_workflow_run(
         self,
@@ -413,7 +435,10 @@ class SQLiteMemoryBackend(MemoryBackend):
 
     def _init_db(self) -> None:
         """Initialize the database schema."""
-        with sqlite3.connect(self.db_path) as conn:
+        # Create the file ourselves so that it is readable only by its owner.
+        os.close(os.open(self.db_path, os.O_CREAT | os.O_RDWR, 0o600))
+
+        with self._get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS memory_entries (
                     id TEXT PRIMARY KEY,
@@ -452,11 +477,16 @@ class SQLiteMemoryBackend(MemoryBackend):
 
             conn.commit()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
+    @contextmanager
+    def _get_connection(self) -> Iterator[sqlite3.Connection]:
+        """Open a connection for one transaction and close it afterwards."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def save_workflow_run(
         self,

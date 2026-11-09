@@ -184,8 +184,8 @@ class FilesystemCacheBackend(CacheBackend):
                 return None
 
             return entry.value
-        except (json.JSONDecodeError, OSError, KeyError):
-            # Corrupted cache file, delete it
+        except (ValueError, TypeError, OSError):
+            # Corrupted cache file (bad JSON or wrong shape), delete it
             await self.delete(key)
             return None
 
