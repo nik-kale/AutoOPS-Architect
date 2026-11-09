@@ -1,13 +1,11 @@
 """Main FastAPI application for AutoOps Architect."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import memory_router, templates_router, workflows_router

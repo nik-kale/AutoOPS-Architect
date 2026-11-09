@@ -3,7 +3,6 @@
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
 
 import yaml
 
@@ -12,6 +11,7 @@ from autoops_architect.models.workflow import WorkflowGraph
 
 class ExportFormat(str, Enum):
     """Supported export formats."""
+
     YAML = "yaml"
     JSON = "json"
     MERMAID = "mermaid"
@@ -62,7 +62,7 @@ class WorkflowExporter:
 
         return exporter()
 
-    def save(self, path: Path, format: Optional[ExportFormat] = None) -> None:
+    def save(self, path: Path, format: ExportFormat | None = None) -> None:
         """
         Save workflow to file.
 
@@ -158,8 +158,10 @@ class WorkflowExporter:
                     "image": "autoops-architect/runner:latest",
                     "command": ["autoops-runner"],
                     "args": [
-                        "--tool", node.tool or "echo",
-                        "--params", json.dumps(node.params),
+                        "--tool",
+                        node.tool or "echo",
+                        "--params",
+                        json.dumps(node.params),
                     ],
                     "resources": {
                         "requests": {
@@ -253,9 +255,7 @@ class WorkflowExporter:
 
             # Add dependencies (convert to valid job names)
             if node_deps[node.id]:
-                job["needs"] = [
-                    dep.replace("-", "_") for dep in node_deps[node.id]
-                ]
+                job["needs"] = [dep.replace("-", "_") for dep in node_deps[node.id]]
 
             # Use valid job name
             job_name = node.id.replace("-", "_")
@@ -265,6 +265,7 @@ class WorkflowExporter:
 
 
 # Convenience functions
+
 
 def export_to_yaml(workflow: WorkflowGraph) -> str:
     """Export workflow to YAML."""

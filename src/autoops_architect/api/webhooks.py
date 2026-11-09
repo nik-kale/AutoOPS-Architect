@@ -2,10 +2,9 @@
 
 import hashlib
 import hmac
-import json
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -26,13 +25,12 @@ class WebhookConfig(BaseModel):
     id: str = Field(..., description="Unique webhook ID")
     name: str = Field(..., min_length=3, max_length=100)
     source: WebhookSource = Field(default=WebhookSource.GENERIC)
-    template_id: Optional[str] = Field(None, description="Workflow template to trigger")
-    goal_template: Optional[str] = Field(None, description="Goal template with placeholders")
+    template_id: str | None = Field(None, description="Workflow template to trigger")
+    goal_template: str | None = Field(None, description="Goal template with placeholders")
     field_mapping: dict[str, str] = Field(
-        default_factory=dict,
-        description="Map webhook fields to goal parameters using JSONPath"
+        default_factory=dict, description="Map webhook fields to goal parameters using JSONPath"
     )
-    secret: Optional[str] = Field(None, description="Secret for signature verification")
+    secret: str | None = Field(None, description="Secret for signature verification")
     enabled: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -45,13 +43,13 @@ class WebhookEvent(BaseModel):
     webhook_id: str
     source: WebhookSource
     payload: dict[str, Any]
-    signature: Optional[str] = None
+    signature: str | None = None
     verified: bool = False
-    workflow_id: Optional[str] = None
+    workflow_id: str | None = None
     status: str = "received"  # received, processing, completed, failed
-    error: Optional[str] = None
+    error: str | None = None
     received_at: datetime = Field(default_factory=datetime.utcnow)
-    processed_at: Optional[datetime] = None
+    processed_at: datetime | None = None
 
 
 # In-memory storage (replace with database in production)
@@ -79,38 +77,22 @@ def verify_webhook_signature(
     """
     if source == WebhookSource.PAGERDUTY:
         # PagerDuty uses SHA-256 HMAC
-        expected = hmac.new(
-            secret.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature, expected)
 
     elif source == WebhookSource.DATADOG:
         # Datadog uses SHA-256 HMAC
-        expected = hmac.new(
-            secret.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature, expected)
 
     elif source == WebhookSource.GITHUB:
         # GitHub uses SHA-256 HMAC with sha256= prefix
-        expected = "sha256=" + hmac.new(
-            secret.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
+        expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature, expected)
 
     elif source == WebhookSource.GENERIC:
         # Generic: simple HMAC SHA-256
-        expected = hmac.new(
-            secret.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature, expected)
 
     else:
@@ -288,4 +270,3 @@ def parse_webhook_payload(
         return parse_opsgenie_webhook(payload)
     else:
         return payload
-

@@ -2,9 +2,7 @@
 
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -35,7 +33,7 @@ def get_builtin_templates_dir() -> Path:
     return templates_dir
 
 
-def get_project_templates_dir() -> Optional[Path]:
+def get_project_templates_dir() -> Path | None:
     """
     Get the project-level templates directory.
 
@@ -289,7 +287,6 @@ def create_registry_with_file_templates(
         A TemplateRegistry with all templates.
     """
     from autoops_architect.templates.registry import (
-        create_default_template_registry,
         get_builtin_templates,
     )
 
@@ -323,7 +320,7 @@ class TemplateDiscovery:
 
     def __init__(self) -> None:
         """Initialize template discovery."""
-        self._cache: Optional[list[WorkflowTemplate]] = None
+        self._cache: list[WorkflowTemplate] | None = None
 
     def get_template_sources(self) -> dict[str, Path]:
         """
@@ -366,7 +363,7 @@ class TemplateDiscovery:
     def find_template(
         self,
         template_id: str,
-    ) -> Optional[tuple[WorkflowTemplate, str]]:
+    ) -> tuple[WorkflowTemplate, str] | None:
         """
         Find a template by ID and return it with its source.
 

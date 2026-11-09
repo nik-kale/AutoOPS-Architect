@@ -8,7 +8,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from autoops_architect.models.execution import WorkflowRunResult
 from autoops_architect.models.goal import Goal
@@ -95,7 +95,7 @@ class MemoryBackend(ABC):
         return self.search(keywords, limit=limit, min_score=min_score)
 
     @abstractmethod
-    def get_entry(self, entry_id: str) -> Optional[MemoryEntry]:
+    def get_entry(self, entry_id: str) -> MemoryEntry | None:
         """Get a specific memory entry by ID."""
         pass
 
@@ -120,7 +120,7 @@ class MemoryBackend(ABC):
         self,
         key: str,
         value: Any,
-        description: Optional[str] = None,
+        description: str | None = None,
     ) -> None:
         """Set a user preference."""
         pass
@@ -131,7 +131,7 @@ class MemoryBackend(ABC):
         pass
 
     @abstractmethod
-    def list_preferences(self, prefix: Optional[str] = None) -> list[str]:
+    def list_preferences(self, prefix: str | None = None) -> list[str]:
         """List all preference keys."""
         pass
 
@@ -170,7 +170,7 @@ class JSONMemoryBackend(MemoryBackend):
         """Load data from the JSON file."""
         if self.file_path.exists():
             try:
-                with open(self.file_path, "r") as f:
+                with open(self.file_path) as f:
                     data = json.load(f)
 
                 # Load entries
@@ -193,13 +193,9 @@ class JSONMemoryBackend(MemoryBackend):
         data = {
             "version": "1.0",
             "last_updated": datetime.utcnow().isoformat(),
-            "entries": [
-                entry.model_dump(mode="json")
-                for entry in self._entries.values()
-            ],
+            "entries": [entry.model_dump(mode="json") for entry in self._entries.values()],
             "preferences": [
-                pref.model_dump(mode="json")
-                for pref in self._preferences.preferences.values()
+                pref.model_dump(mode="json") for pref in self._preferences.preferences.values()
             ],
         }
 
@@ -347,7 +343,7 @@ class JSONMemoryBackend(MemoryBackend):
         results.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in results[:limit]]
 
-    def get_entry(self, entry_id: str) -> Optional[MemoryEntry]:
+    def get_entry(self, entry_id: str) -> MemoryEntry | None:
         """Get a specific memory entry by ID."""
         return self._entries.get(entry_id)
 
@@ -362,7 +358,7 @@ class JSONMemoryBackend(MemoryBackend):
             key=lambda e: e.created_at,
             reverse=True,
         )
-        return entries[offset:offset + limit]
+        return entries[offset : offset + limit]
 
     def delete_entry(self, entry_id: str) -> bool:
         """Delete a memory entry."""
@@ -376,7 +372,7 @@ class JSONMemoryBackend(MemoryBackend):
         self,
         key: str,
         value: Any,
-        description: Optional[str] = None,
+        description: str | None = None,
     ) -> None:
         """Set a user preference."""
         self._preferences.set(key, value, description)
@@ -386,7 +382,7 @@ class JSONMemoryBackend(MemoryBackend):
         """Get a user preference."""
         return self._preferences.get(key, default)
 
-    def list_preferences(self, prefix: Optional[str] = None) -> list[str]:
+    def list_preferences(self, prefix: str | None = None) -> list[str]:
         """List all preference keys."""
         return self._preferences.list_keys(prefix)
 
@@ -472,30 +468,33 @@ class SQLiteMemoryBackend(MemoryBackend):
         entry_id = f"mem-{uuid.uuid4().hex[:12]}"
 
         with self._get_connection() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO memory_entries (
                     id, goal_description, workflow_id, workflow_summary,
                     outcome_status, outcome_summary, keywords, services,
                     environment, node_count, success_count, failed_count,
                     duration_seconds, workflow_json, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                entry_id,
-                goal.description,
-                workflow.id,
-                workflow.name,
-                result.overall_status.value,
-                result.summary,
-                json.dumps(goal.get_keywords()),
-                json.dumps(list(goal.services)),
-                goal.environment.value if goal.environment else None,
-                len(workflow.nodes),
-                result.success_count,
-                result.failed_count,
-                result.duration_seconds,
-                workflow.model_dump_json(),
-                datetime.utcnow().isoformat(),
-            ))
+            """,
+                (
+                    entry_id,
+                    goal.description,
+                    workflow.id,
+                    workflow.name,
+                    result.overall_status.value,
+                    result.summary,
+                    json.dumps(goal.get_keywords()),
+                    json.dumps(list(goal.services)),
+                    goal.environment.value if goal.environment else None,
+                    len(workflow.nodes),
+                    result.success_count,
+                    result.failed_count,
+                    result.duration_seconds,
+                    workflow.model_dump_json(),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
             conn.commit()
 
         return entry_id
@@ -562,13 +561,10 @@ class SQLiteMemoryBackend(MemoryBackend):
         results.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in results[:limit]]
 
-    def get_entry(self, entry_id: str) -> Optional[MemoryEntry]:
+    def get_entry(self, entry_id: str) -> MemoryEntry | None:
         """Get a specific memory entry by ID."""
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM memory_entries WHERE id = ?",
-                (entry_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (entry_id,)).fetchone()
 
         if row:
             return self._row_to_entry(row)
@@ -581,21 +577,21 @@ class SQLiteMemoryBackend(MemoryBackend):
     ) -> list[MemoryEntry]:
         """List all memory entries."""
         with self._get_connection() as conn:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT * FROM memory_entries
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
-            """, (limit, offset)).fetchall()
+            """,
+                (limit, offset),
+            ).fetchall()
 
         return [self._row_to_entry(row) for row in rows]
 
     def delete_entry(self, entry_id: str) -> bool:
         """Delete a memory entry."""
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM memory_entries WHERE id = ?",
-                (entry_id,)
-            )
+            cursor = conn.execute("DELETE FROM memory_entries WHERE id = ?", (entry_id,))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -603,52 +599,49 @@ class SQLiteMemoryBackend(MemoryBackend):
         self,
         key: str,
         value: Any,
-        description: Optional[str] = None,
+        description: str | None = None,
     ) -> None:
         """Set a user preference."""
         now = datetime.utcnow().isoformat()
         value_json = json.dumps(value)
 
         with self._get_connection() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO preferences (key, value, description, created_at, updated_at)
                 VALUES (?, ?, ?, COALESCE(
                     (SELECT created_at FROM preferences WHERE key = ?), ?
                 ), ?)
-            """, (key, value_json, description, key, now, now))
+            """,
+                (key, value_json, description, key, now, now),
+            )
             conn.commit()
 
     def get_preference(self, key: str, default: Any = None) -> Any:
         """Get a user preference."""
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT value FROM preferences WHERE key = ?",
-                (key,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM preferences WHERE key = ?", (key,)).fetchone()
 
         if row:
             return json.loads(row["value"])
         return default
 
-    def list_preferences(self, prefix: Optional[str] = None) -> list[str]:
+    def list_preferences(self, prefix: str | None = None) -> list[str]:
         """List all preference keys."""
         with self._get_connection() as conn:
             if prefix:
                 rows = conn.execute(
-                    "SELECT key FROM preferences WHERE key LIKE ? ORDER BY key",
-                    (f"{prefix}%",)
+                    "SELECT key FROM preferences WHERE key LIKE ? ORDER BY key", (f"{prefix}%",)
                 ).fetchall()
             else:
-                rows = conn.execute(
-                    "SELECT key FROM preferences ORDER BY key"
-                ).fetchall()
+                rows = conn.execute("SELECT key FROM preferences ORDER BY key").fetchall()
 
         return [row["key"] for row in rows]
 
 
 def get_memory_backend(
     backend_type: str = "json",
-    path: Optional[str] = None,
+    path: str | None = None,
 ) -> MemoryBackend:
     """
     Factory function to get a memory backend.

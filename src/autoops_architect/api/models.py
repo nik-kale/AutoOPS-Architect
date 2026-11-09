@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -20,15 +20,15 @@ class GoalRequest(BaseModel):
         default_factory=list,
         description="List of affected services",
     )
-    environment: Optional[str] = Field(
+    environment: str | None = Field(
         default=None,
         description="Target environment (production, staging, development)",
     )
-    priority: Optional[str] = Field(
+    priority: str | None = Field(
         default=None,
         description="Priority level (critical, high, medium, low)",
     )
-    time_window: Optional[str] = Field(
+    time_window: str | None = Field(
         default=None,
         description="Relevant time window (e.g., 'last 1 hour')",
     )
@@ -36,7 +36,7 @@ class GoalRequest(BaseModel):
         default_factory=list,
         description="Additional constraints for workflow generation",
     )
-    use_template: Optional[str] = Field(
+    use_template: str | None = Field(
         default=None,
         description="Template ID to use instead of LLM generation",
     )
@@ -52,7 +52,7 @@ class NodeResponse(BaseModel):
     tool: str
     params: dict[str, Any]
     requires_human_approval: bool
-    timeout_seconds: Optional[int]
+    timeout_seconds: int | None
     retry_count: int
     continue_on_failure: bool
 
@@ -62,7 +62,7 @@ class EdgeResponse(BaseModel):
 
     from_node_id: str
     to_node_id: str
-    condition: Optional[str]
+    condition: str | None
 
 
 class WorkflowResponse(BaseModel):
@@ -83,7 +83,7 @@ class WorkflowResponse(BaseModel):
 class WorkflowUpdateRequest(BaseModel):
     """Request to update a workflow before execution."""
 
-    nodes: Optional[list[dict[str, Any]]] = Field(
+    nodes: list[dict[str, Any]] | None = Field(
         default=None,
         description="Updated nodes (partial updates supported)",
     )
@@ -110,11 +110,11 @@ class NodeExecutionEvent(BaseModel):
         ...,
         description="Type: node_started, node_completed, node_failed, workflow_completed",
     )
-    node_id: Optional[str] = None
-    node_name: Optional[str] = None
+    node_id: str | None = None
+    node_name: str | None = None
     status: str
-    message: Optional[str] = None
-    result: Optional[dict[str, Any]] = None
+    message: str | None = None
+    result: dict[str, Any] | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -133,7 +133,7 @@ class ExecutionRequest(BaseModel):
         default_factory=list,
         description="Node IDs to skip during execution",
     )
-    approval_callback_url: Optional[str] = Field(
+    approval_callback_url: str | None = Field(
         default=None,
         description="URL to call for human approval requests",
     )
@@ -146,9 +146,9 @@ class ExecutionResponse(BaseModel):
     workflow_id: str
     status: ExecutionStatus
     started_at: datetime
-    completed_at: Optional[datetime]
+    completed_at: datetime | None
     node_results: list[dict[str, Any]]
-    summary: Optional[str]
+    summary: str | None
     success_count: int
     failed_count: int
     skipped_count: int
@@ -171,14 +171,14 @@ class MemoryEntryResponse(BaseModel):
     id: str
     goal_description: str
     workflow_id: str
-    workflow_summary: Optional[str]
+    workflow_summary: str | None
     outcome_status: str
-    outcome_summary: Optional[str]
+    outcome_summary: str | None
     keywords: list[str]
     services: list[str]
-    environment: Optional[str]
+    environment: str | None
     created_at: datetime
-    relevance_score: Optional[float]
+    relevance_score: float | None
 
 
 class HealthResponse(BaseModel):

@@ -9,7 +9,7 @@ These tools provide integration with:
 import asyncio
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -35,7 +35,7 @@ class AutoRCATool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.base_url = os.getenv("AUTORCA_URL", "http://localhost:8080")
         self.api_key = os.getenv("AUTORCA_API_KEY", "")
@@ -54,23 +54,17 @@ class AutoRCATool(Tool):
         return {
             "type": "object",
             "properties": {
-                "incident_id": {
-                    "type": "string",
-                    "description": "Incident identifier"
-                },
+                "incident_id": {"type": "string", "description": "Incident identifier"},
                 "symptoms": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of observed symptoms"
+                    "description": "List of observed symptoms",
                 },
-                "context": {
-                    "type": "object",
-                    "description": "Additional context for RCA"
-                },
+                "context": {"type": "object", "description": "Additional context for RCA"},
                 "mode": {
                     "type": "string",
                     "enum": ["quick", "thorough", "interactive"],
-                    "description": "Analysis mode (default: quick)"
+                    "description": "Analysis mode (default: quick)",
                 },
             },
         }
@@ -78,7 +72,7 @@ class AutoRCATool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Run root cause analysis."""
         if not self.config.enabled:
@@ -86,7 +80,7 @@ class AutoRCATool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "AutoRCA integration is disabled. "
-                              "Set AUTORCA_URL and enable the tool to use.",
+                    "Set AUTORCA_URL and enable the tool to use.",
                 },
                 raw_output="AutoRCA tool is disabled.",
             )
@@ -207,15 +201,17 @@ class AutoRCATool(Tool):
         if result.get("_mock"):
             lines.append(f"[MOCK MODE] {result.get('_message', '')}")
 
-        lines.extend([
-            "",
-            "Root Cause:",
-            f"  Category: {result['root_cause']['category']}",
-            f"  Description: {result['root_cause']['description']}",
-            f"  Confidence: {result['root_cause']['confidence']:.0%}",
-            "",
-            "Contributing Factors:",
-        ])
+        lines.extend(
+            [
+                "",
+                "Root Cause:",
+                f"  Category: {result['root_cause']['category']}",
+                f"  Description: {result['root_cause']['description']}",
+                f"  Confidence: {result['root_cause']['confidence']:.0%}",
+                "",
+                "Contributing Factors:",
+            ]
+        )
 
         for factor in result.get("contributing_factors", []):
             lines.append(f"  - {factor['factor']} ({factor['confidence']:.0%})")
@@ -255,7 +251,7 @@ class MCPTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.gateway_url = os.getenv("MCP_GATEWAY_URL", "http://localhost:3000")
         self.api_key = os.getenv("MCP_API_KEY", "")
@@ -276,16 +272,13 @@ class MCPTool(Tool):
             "properties": {
                 "server": {
                     "type": "string",
-                    "description": "MCP server name (e.g., 'jira', 'slack', 'pagerduty')"
+                    "description": "MCP server name (e.g., 'jira', 'slack', 'pagerduty')",
                 },
                 "action": {
                     "type": "string",
-                    "description": "Action to execute (e.g., 'create_issue', 'send_message')"
+                    "description": "Action to execute (e.g., 'create_issue', 'send_message')",
                 },
-                "arguments": {
-                    "type": "object",
-                    "description": "Action-specific arguments"
-                },
+                "arguments": {"type": "object", "description": "Action-specific arguments"},
             },
             "required": ["server", "action"],
         }
@@ -293,7 +286,7 @@ class MCPTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute an action via MCP Gateway."""
         if not self.config.enabled:
@@ -301,7 +294,7 @@ class MCPTool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "MCP Gateway integration is disabled. "
-                              "Set MCP_GATEWAY_URL and enable the tool to use.",
+                    "Set MCP_GATEWAY_URL and enable the tool to use.",
                 },
                 raw_output="MCP tool is disabled.",
             )
@@ -411,9 +404,7 @@ class MCPTool(Tool):
                 if "summary" in outputs:
                     lines.append(f"- {outputs['summary']}")
                 elif "root_cause" in outputs:
-                    lines.append(
-                        f"- RCA: {outputs['root_cause'].get('description', 'N/A')}"
-                    )
+                    lines.append(f"- RCA: {outputs['root_cause'].get('description', 'N/A')}")
 
         return "\n".join(lines) if len(lines) > 2 else "Workflow completed"
 
@@ -608,7 +599,7 @@ class BrowserMissionTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.agent_url = os.getenv("OPS_AGENT_DESKTOP_URL", "http://localhost:9090")
         self.api_key = os.getenv("OPS_AGENT_API_KEY", "")
@@ -629,28 +620,25 @@ class BrowserMissionTool(Tool):
             "properties": {
                 "mission_file": {
                     "type": "string",
-                    "description": "Path to mission definition file"
+                    "description": "Path to mission definition file",
                 },
                 "mission_type": {
                     "type": "string",
-                    "enum": ["health_check", "ui_test", "data_extraction", "session_replay", "custom"],
-                    "description": "Type of browser mission"
+                    "enum": [
+                        "health_check",
+                        "ui_test",
+                        "data_extraction",
+                        "session_replay",
+                        "custom",
+                    ],
+                    "description": "Type of browser mission",
                 },
-                "target_url": {
-                    "type": "string",
-                    "description": "Target URL for the mission"
-                },
-                "parameters": {
-                    "type": "object",
-                    "description": "Mission-specific parameters"
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Mission timeout in seconds"
-                },
+                "target_url": {"type": "string", "description": "Target URL for the mission"},
+                "parameters": {"type": "object", "description": "Mission-specific parameters"},
+                "timeout": {"type": "integer", "description": "Mission timeout in seconds"},
                 "capture_screenshots": {
                     "type": "boolean",
-                    "description": "Whether to capture screenshots during mission"
+                    "description": "Whether to capture screenshots during mission",
                 },
             },
         }
@@ -658,7 +646,7 @@ class BrowserMissionTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute a browser mission."""
         if not self.config.enabled:
@@ -666,7 +654,7 @@ class BrowserMissionTool(Tool):
                 outputs={
                     "status": "disabled",
                     "message": "Ops-Agent-Desktop integration is disabled. "
-                              "Set OPS_AGENT_DESKTOP_URL and enable the tool to use.",
+                    "Set OPS_AGENT_DESKTOP_URL and enable the tool to use.",
                 },
                 raw_output="Browser mission tool is disabled.",
             )
@@ -711,7 +699,7 @@ class BrowserMissionTool(Tool):
         self,
         mission_type: str,
         target_url: str,
-        mission_file: Optional[str],
+        mission_file: str | None,
         parameters: dict[str, Any],
         timeout: int,
         capture_screenshots: bool,
@@ -867,7 +855,7 @@ class DatadogTool(Tool):
         ... })
     """
 
-    def __init__(self, config: Optional[ToolConfig] = None) -> None:
+    def __init__(self, config: ToolConfig | None = None) -> None:
         super().__init__(config)
         self.api_key = os.getenv("DATADOG_API_KEY", "")
         self.app_key = os.getenv("DATADOG_APP_KEY", "")
@@ -890,20 +878,17 @@ class DatadogTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": ["query_metrics", "query_logs", "list_monitors", "get_events"],
-                    "description": "Action to perform"
+                    "description": "Action to perform",
                 },
                 "query": {
                     "type": "string",
-                    "description": "Query string (metric query or log query)"
+                    "description": "Query string (metric query or log query)",
                 },
                 "timeframe": {
                     "type": "string",
-                    "description": "Time window (e.g., '1h', '6h', '1d')"
+                    "description": "Time window (e.g., '1h', '6h', '1d')",
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results"
-                },
+                "limit": {"type": "integer", "description": "Maximum number of results"},
             },
             "required": ["action"],
         }
@@ -911,7 +896,7 @@ class DatadogTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute a Datadog query."""
         if not self.config.enabled:

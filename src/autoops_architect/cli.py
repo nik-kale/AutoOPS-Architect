@@ -1,9 +1,7 @@
 """Command-line interface for AutoOps Architect."""
 
 import json
-import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -54,27 +52,19 @@ def get_executor(dry_run: bool = False) -> WorkflowExecutor:
 @app.command()
 def plan(
     goal: str = typer.Argument(..., help="Natural language description of your goal"),
-    service: Optional[list[str]] = typer.Option(
-        None, "--service", "-s", help="Target service(s)"
-    ),
-    environment: Optional[str] = typer.Option(
+    service: list[str] | None = typer.Option(None, "--service", "-s", help="Target service(s)"),
+    environment: str | None = typer.Option(
         None, "--env", "-e", help="Environment (prod/staging/dev)"
     ),
-    priority: Optional[str] = typer.Option(
+    priority: str | None = typer.Option(
         None, "--priority", "-p", help="Priority (critical/high/medium/low)"
     ),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None, "--output", "-o", help="Output file for the workflow JSON"
     ),
-    yaml_output: bool = typer.Option(
-        False, "--yaml", help="Output as YAML instead of JSON"
-    ),
-    mock: bool = typer.Option(
-        False, "--mock", help="Use mock LLM (no API calls)"
-    ),
-    show_mermaid: bool = typer.Option(
-        False, "--mermaid", help="Show Mermaid diagram"
-    ),
+    yaml_output: bool = typer.Option(False, "--yaml", help="Output as YAML instead of JSON"),
+    mock: bool = typer.Option(False, "--mock", help="Use mock LLM (no API calls)"),
+    show_mermaid: bool = typer.Option(False, "--mermaid", help="Show Mermaid diagram"),
 ) -> None:
     """
     Generate a workflow plan from a natural language goal.
@@ -82,10 +72,12 @@ def plan(
     Example:
         autoops plan "Investigate elevated 5xx errors for the checkout service"
     """
-    console.print(Panel.fit(
-        f"[bold blue]Planning workflow for:[/]\n{goal}",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Planning workflow for:[/]\n{goal}",
+            title="AutoOps Architect",
+        )
+    )
 
     # Parse environment
     env = Environment.UNKNOWN
@@ -198,11 +190,12 @@ def run(
         console.print(f"[red]Error parsing workflow: {e}[/]")
         raise typer.Exit(1)
 
-    console.print(Panel.fit(
-        f"[bold blue]Executing workflow:[/] {workflow.name}\n"
-        f"[dim]ID: {workflow.id}[/]",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Executing workflow:[/] {workflow.name}\n[dim]ID: {workflow.id}[/]",
+            title="AutoOps Architect",
+        )
+    )
 
     if dry_run:
         console.print("[yellow]Running in dry-run mode (no tools will be executed)[/]")
@@ -243,14 +236,18 @@ def run(
         ExecutionStatus.CANCELLED: "yellow",
     }.get(result.overall_status, "white")
 
-    console.print(Panel(
-        f"[{status_color}]{result.overall_status.value.upper()}[/]\n\n"
-        f"Nodes: {result.success_count} succeeded, "
-        f"{result.failed_count} failed, "
-        f"{result.skipped_count} skipped\n"
-        f"Duration: {result.duration_seconds:.2f}s" if result.duration_seconds else "",
-        title="Execution Result",
-    ))
+    console.print(
+        Panel(
+            f"[{status_color}]{result.overall_status.value.upper()}[/]\n\n"
+            f"Nodes: {result.success_count} succeeded, "
+            f"{result.failed_count} failed, "
+            f"{result.skipped_count} skipped\n"
+            f"Duration: {result.duration_seconds:.2f}s"
+            if result.duration_seconds
+            else "",
+            title="Execution Result",
+        )
+    )
 
     # Show detailed results
     if result.failed_count > 0:
@@ -269,18 +266,12 @@ def run(
 @app.command("plan-and-run")
 def plan_and_run(
     goal: str = typer.Argument(..., help="Natural language description of your goal"),
-    service: Optional[list[str]] = typer.Option(
-        None, "--service", "-s", help="Target service(s)"
-    ),
-    environment: Optional[str] = typer.Option(
+    service: list[str] | None = typer.Option(None, "--service", "-s", help="Target service(s)"),
+    environment: str | None = typer.Option(
         None, "--env", "-e", help="Environment (prod/staging/dev)"
     ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", "-n", help="Simulate execution"
-    ),
-    mock: bool = typer.Option(
-        False, "--mock", help="Use mock LLM"
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Simulate execution"),
+    mock: bool = typer.Option(False, "--mock", help="Use mock LLM"),
 ) -> None:
     """
     Plan and execute a workflow in one step.
@@ -288,10 +279,12 @@ def plan_and_run(
     Example:
         autoops plan-and-run "Check why login API is slow" --service auth-api
     """
-    console.print(Panel.fit(
-        f"[bold blue]Goal:[/] {goal}",
-        title="AutoOps Architect - Plan & Run",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Goal:[/] {goal}",
+            title="AutoOps Architect - Plan & Run",
+        )
+    )
 
     # Parse environment
     env = Environment.UNKNOWN
@@ -343,8 +336,10 @@ def plan_and_run(
     executor = get_executor(dry_run=dry_run)
 
     def on_status(node_id: str, status: ExecutionStatus, result=None):
-        icon = "✅" if status == ExecutionStatus.SUCCESS else (
-            "❌" if status == ExecutionStatus.FAILED else "⏳"
+        icon = (
+            "✅"
+            if status == ExecutionStatus.SUCCESS
+            else ("❌" if status == ExecutionStatus.FAILED else "⏳")
         )
         if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
             console.print(f"  {icon} {node_id}")
@@ -368,7 +363,7 @@ def plan_and_run(
 @app.command()
 def history(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of entries to show"),
-    search: Optional[str] = typer.Option(None, "--search", "-q", help="Search keywords"),
+    search: str | None = typer.Option(None, "--search", "-q", help="Search keywords"),
 ) -> None:
     """
     Show workflow execution history.
@@ -491,8 +486,10 @@ app.add_typer(templates_app, name="templates")
 
 @templates_app.command("list")
 def templates_list(
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
-    source: Optional[str] = typer.Option(None, "--source", "-s", help="Filter by source (builtin/project/user)"),
+    category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
+    source: str | None = typer.Option(
+        None, "--source", "-s", help="Filter by source (builtin/project/user)"
+    ),
     show_source: bool = typer.Option(False, "--show-source", help="Show template source column"),
 ) -> None:
     """
@@ -510,7 +507,6 @@ def templates_list(
     """
     from autoops_architect.templates.loader import (
         TemplateDiscovery,
-        create_registry_with_file_templates,
     )
 
     discovery = TemplateDiscovery()
@@ -521,10 +517,7 @@ def templates_list(
         if source not in templates_by_source:
             console.print(f"[red]Unknown source: {source}. Valid: builtin, project, user[/]")
             raise typer.Exit(1)
-        templates = [
-            {"template": t, "source": source}
-            for t in templates_by_source.get(source, [])
-        ]
+        templates = [{"template": t, "source": source} for t in templates_by_source.get(source, [])]
     else:
         # Get all templates with source info
         templates = []
@@ -534,6 +527,7 @@ def templates_list(
 
     # Also include code-defined built-in templates
     from autoops_architect.templates.registry import get_builtin_templates
+
     code_templates = get_builtin_templates()
     code_ids = {t["template"].id for t in templates}
     for t in code_templates:
@@ -597,19 +591,22 @@ def templates_show(
         console.print(f"[red]Template not found: {template_id}[/]")
         raise typer.Exit(1)
 
-    console.print(Panel.fit(
-        f"[bold]{template.name}[/]\n\n"
-        f"{template.description}\n\n"
-        f"[dim]Category:[/] {template.category}\n"
-        f"[dim]Tags:[/] {', '.join(template.tags)}\n"
-        f"[dim]Version:[/] {template.version}\n"
-        f"[dim]Author:[/] {template.author or 'N/A'}\n"
-        f"[dim]Nodes:[/] {len(template.nodes)}",
-        title=f"Template: {template_id}",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{template.name}[/]\n\n"
+            f"{template.description}\n\n"
+            f"[dim]Category:[/] {template.category}\n"
+            f"[dim]Tags:[/] {', '.join(template.tags)}\n"
+            f"[dim]Version:[/] {template.version}\n"
+            f"[dim]Author:[/] {template.author or 'N/A'}\n"
+            f"[dim]Nodes:[/] {len(template.nodes)}",
+            title=f"Template: {template_id}",
+        )
+    )
 
     if show_yaml:
         import yaml
+
         template_data = template.model_dump(mode="json")
         yaml_output = yaml.dump(template_data, default_flow_style=False, sort_keys=False)
         console.print("\n[bold]Template YAML:[/]")
@@ -634,9 +631,11 @@ def templates_show(
 def templates_use(
     template_id: str = typer.Argument(..., help="Template ID to use"),
     goal: str = typer.Option(..., "--goal", "-g", help="Goal description"),
-    service: Optional[str] = typer.Option(None, "--service", "-s", help="Target service"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
-    run_workflow: bool = typer.Option(False, "--run", "-r", help="Execute the workflow after creating"),
+    service: str | None = typer.Option(None, "--service", "-s", help="Target service"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output file"),
+    run_workflow: bool = typer.Option(
+        False, "--run", "-r", help="Execute the workflow after creating"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run execution"),
 ) -> None:
     """
@@ -687,8 +686,10 @@ def templates_use(
         executor = get_executor(dry_run=dry_run)
 
         def on_status(node_id: str, status: ExecutionStatus, result=None):
-            icon = "✅" if status == ExecutionStatus.SUCCESS else (
-                "❌" if status == ExecutionStatus.FAILED else "⏳"
+            icon = (
+                "✅"
+                if status == ExecutionStatus.SUCCESS
+                else ("❌" if status == ExecutionStatus.FAILED else "⏳")
             )
             if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
                 console.print(f"  {icon} {node_id}")
@@ -709,7 +710,9 @@ def templates_use(
 
 @templates_app.command("init")
 def templates_init(
-    location: str = typer.Option("project", "--location", "-l", help="Where to create: project or user"),
+    location: str = typer.Option(
+        "project", "--location", "-l", help="Where to create: project or user"
+    ),
 ) -> None:
     """
     Initialize a templates directory.
@@ -721,7 +724,6 @@ def templates_init(
         autoops templates init --location user
     """
     from autoops_architect.templates.loader import (
-        get_project_templates_dir,
         get_user_templates_dir,
     )
 
@@ -966,16 +968,19 @@ def memory_show(
 
     status_color = "green" if entry.outcome_status == "success" else "red"
 
-    console.print(Panel(
-        f"[bold]Goal:[/] {entry.goal_description}\n\n"
-        f"[bold]Status:[/] [{status_color}]{entry.outcome_status}[/]\n"
-        f"[bold]Workflow ID:[/] {entry.workflow_id}\n"
-        f"[bold]Services:[/] {', '.join(entry.services) if entry.services else 'N/A'}\n"
-        f"[bold]Nodes:[/] {entry.success_count} succeeded / {entry.node_count} total\n"
-        f"[bold]Duration:[/] {entry.duration_seconds:.2f}s" if entry.duration_seconds else ""
-        f"\n[bold]Created:[/] {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
-        title=f"Memory Entry: {entry.id}",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Goal:[/] {entry.goal_description}\n\n"
+            f"[bold]Status:[/] [{status_color}]{entry.outcome_status}[/]\n"
+            f"[bold]Workflow ID:[/] {entry.workflow_id}\n"
+            f"[bold]Services:[/] {', '.join(entry.services) if entry.services else 'N/A'}\n"
+            f"[bold]Nodes:[/] {entry.success_count} succeeded / {entry.node_count} total\n"
+            f"[bold]Duration:[/] {entry.duration_seconds:.2f}s"
+            if entry.duration_seconds
+            else f"\n[bold]Created:[/] {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            title=f"Memory Entry: {entry.id}",
+        )
+    )
 
     if entry.outcome_summary:
         console.print(f"\n[bold]Summary:[/]\n{entry.outcome_summary}")
@@ -1101,13 +1106,15 @@ def serve(
         )
         raise typer.Exit(1)
 
-    console.print(Panel.fit(
-        f"[bold blue]Starting AutoOps Architect Web UI[/]\n\n"
-        f"Server: http://{host}:{port}\n"
-        f"API Docs: http://{host}:{port}/docs\n"
-        f"Debug: {'enabled' if debug else 'disabled'}",
-        title="AutoOps Architect",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold blue]Starting AutoOps Architect Web UI[/]\n\n"
+            f"Server: http://{host}:{port}\n"
+            f"API Docs: http://{host}:{port}/docs\n"
+            f"Debug: {'enabled' if debug else 'disabled'}",
+            title="AutoOps Architect",
+        )
+    )
 
     uvicorn.run(
         "autoops_architect.api.app:app",

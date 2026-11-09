@@ -3,7 +3,6 @@
 import pytest
 
 from autoops_architect.tools.base import (
-    Tool,
     ToolConfig,
     ToolRegistry,
     ToolResult,
@@ -11,16 +10,16 @@ from autoops_architect.tools.base import (
     create_default_registry,
 )
 from autoops_architect.tools.builtin import (
+    AnalysisTool,
     EchoTool,
     LogCollectorTool,
     MetricQueryTool,
-    AnalysisTool,
     SummaryTool,
 )
 from autoops_architect.tools.integrations import (
     AutoRCATool,
-    MCPTool,
     BrowserMissionTool,
+    MCPTool,
 )
 
 
@@ -152,11 +151,13 @@ class TestLogCollectorTool:
     async def test_collect_logs(self):
         """Test log collection."""
         tool = LogCollectorTool()
-        result = await tool.execute({
-            "service": "test-service",
-            "duration": "1h",
-            "level": "error",
-        })
+        result = await tool.execute(
+            {
+                "service": "test-service",
+                "duration": "1h",
+                "level": "error",
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert "log_count" in result.outputs
@@ -180,10 +181,12 @@ class TestMetricQueryTool:
     async def test_query_metrics(self):
         """Test metric querying."""
         tool = MetricQueryTool()
-        result = await tool.execute({
-            "service": "test-service",
-            "metric_name": "http_requests_total",
-        })
+        result = await tool.execute(
+            {
+                "service": "test-service",
+                "metric_name": "http_requests_total",
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert "current_value" in result.outputs
@@ -239,9 +242,7 @@ class TestSummaryTool:
 
         context = {
             "analysis": {
-                "findings": [
-                    {"type": "error", "description": "Found errors", "severity": "high"}
-                ],
+                "findings": [{"type": "error", "description": "Found errors", "severity": "high"}],
                 "recommendation": "Investigate immediately",
             }
         }
@@ -281,10 +282,12 @@ class TestIntegrationTools:
     async def test_mcp_disabled(self):
         """Test MCP tool when disabled."""
         tool = MCPTool(config=ToolConfig(enabled=False))
-        result = await tool.execute({
-            "server": "jira",
-            "action": "create_issue",
-        })
+        result = await tool.execute(
+            {
+                "server": "jira",
+                "action": "create_issue",
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert result.outputs["status"] == "disabled"
@@ -293,9 +296,11 @@ class TestIntegrationTools:
     async def test_browser_disabled(self):
         """Test browser tool when disabled."""
         tool = BrowserMissionTool(config=ToolConfig(enabled=False))
-        result = await tool.execute({
-            "mission_type": "health_check",
-        })
+        result = await tool.execute(
+            {
+                "mission_type": "health_check",
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert result.outputs["status"] == "disabled"
@@ -304,9 +309,11 @@ class TestIntegrationTools:
     async def test_autorca_enabled_mock(self):
         """Test AutoRCA mock response when enabled."""
         tool = AutoRCATool(config=ToolConfig(enabled=True))
-        result = await tool.execute({
-            "symptoms": ["High error rate", "Slow responses"],
-        })
+        result = await tool.execute(
+            {
+                "symptoms": ["High error rate", "Slow responses"],
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert "root_cause" in result.outputs
@@ -316,11 +323,13 @@ class TestIntegrationTools:
     async def test_mcp_jira_mock(self):
         """Test MCP Jira mock response."""
         tool = MCPTool(config=ToolConfig(enabled=True))
-        result = await tool.execute({
-            "server": "jira",
-            "action": "create_issue",
-            "arguments": {"summary": "Test issue"},
-        })
+        result = await tool.execute(
+            {
+                "server": "jira",
+                "action": "create_issue",
+                "arguments": {"summary": "Test issue"},
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert "issue_key" in result.outputs
@@ -329,11 +338,13 @@ class TestIntegrationTools:
     async def test_mcp_slack_mock(self):
         """Test MCP Slack mock response."""
         tool = MCPTool(config=ToolConfig(enabled=True))
-        result = await tool.execute({
-            "server": "slack",
-            "action": "send_message",
-            "arguments": {"channel": "#alerts"},
-        })
+        result = await tool.execute(
+            {
+                "server": "slack",
+                "action": "send_message",
+                "arguments": {"channel": "#alerts"},
+            }
+        )
 
         assert result.status == ToolStatus.SUCCESS
         assert result.outputs["channel"] == "#alerts"

@@ -41,7 +41,7 @@ async def execute_scheduled_workflow(schedule_id: str) -> None:
     schedule = get_schedule(schedule_id)
     if not schedule or not schedule.enabled:
         return
-    
+
     try:
         # Create goal
         goal = Goal(
@@ -49,18 +49,18 @@ async def execute_scheduled_workflow(schedule_id: str) -> None:
             services=schedule.parameters.get("services", []),
             environment=Environment(schedule.parameters.get("environment", "production")),
         )
-        
+
         # Plan workflow
         architect = Architect()
         workflow = await architect.plan(goal)
-        
+
         # Record execution
         record_execution(
             schedule_id=schedule_id,
             workflow_id=workflow.id,
             status="completed",
         )
-    
+
     except Exception as e:
         # Record failure
         record_execution(
@@ -74,7 +74,7 @@ async def execute_scheduled_workflow(schedule_id: str) -> None:
 async def create_schedule(request: CreateScheduleRequest) -> Schedule:
     """Create a new workflow schedule."""
     schedule_id = f"sched-{uuid.uuid4().hex[:12]}"
-    
+
     schedule = Schedule(
         id=schedule_id,
         name=request.name,
@@ -85,7 +85,7 @@ async def create_schedule(request: CreateScheduleRequest) -> Schedule:
         parameters=request.parameters,
         metadata=request.metadata,
     )
-    
+
     try:
         add_schedule(schedule, execute_scheduled_workflow)
         return schedule
@@ -140,6 +140,5 @@ async def list_schedule_executions(
     schedule = get_schedule(schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    
-    return get_schedule_executions(schedule_id, limit)
 
+    return get_schedule_executions(schedule_id, limit)

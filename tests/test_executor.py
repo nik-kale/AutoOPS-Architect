@@ -4,13 +4,13 @@ import pytest
 
 from autoops_architect.executor.engine import (
     ExecutorConfig,
-    WorkflowExecutor,
     InteractiveExecutor,
+    WorkflowExecutor,
 )
 from autoops_architect.models.execution import ExecutionStatus
-from autoops_architect.models.workflow import Node, NodeType, Edge, WorkflowGraph
+from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
 from autoops_architect.tools.base import ToolRegistry
-from autoops_architect.tools.builtin import EchoTool, LogCollectorTool, SummaryTool, AnalysisTool
+from autoops_architect.tools.builtin import AnalysisTool, EchoTool, LogCollectorTool, SummaryTool
 
 
 @pytest.fixture

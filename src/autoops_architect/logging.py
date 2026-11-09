@@ -5,31 +5,29 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from structlog.types import EventDict, Processor
 
 # Context variables for correlation IDs
-workflow_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+workflow_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "workflow_id", default=None
 )
-execution_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+execution_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "execution_id", default=None
 )
-node_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "node_id", default=None
-)
+node_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("node_id", default=None)
 
 
 # Patterns for sensitive data that should be redacted
 SENSITIVE_PATTERNS = [
-    (re.compile(r'(api[_-]?key["\s:=]+)[\w\-]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(password["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(token["\s:=]+)[\w\-\.]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(secret["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'(authorization[:\s]+bearer\s+)[\w\-\.]+', re.IGNORECASE), r'\1***REDACTED***'),
-    (re.compile(r'sk-[a-zA-Z0-9]{20,}'), 'sk-***REDACTED***'),  # OpenAI keys
+    (re.compile(r'(api[_-]?key["\s:=]+)[\w\-]{20,}', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(password["\s:=]+)[^\s"]+', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(token["\s:=]+)[\w\-\.]{20,}', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r'(secret["\s:=]+)[^\s"]+', re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r"(authorization[:\s]+bearer\s+)[\w\-\.]+", re.IGNORECASE), r"\1***REDACTED***"),
+    (re.compile(r"sk-[a-zA-Z0-9]{20,}"), "sk-***REDACTED***"),  # OpenAI keys
 ]
 
 
@@ -83,7 +81,7 @@ def redact_sensitive_data(
 
 
 def configure_logging(
-    log_level: Optional[str] = None,
+    log_level: str | None = None,
     json_logs: bool = True,
     dev_mode: bool = False,
 ) -> None:
@@ -158,7 +156,7 @@ def configure_logging(
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """
     Get a structured logger instance.
 
@@ -190,9 +188,9 @@ class LogContext:
 
     def __init__(
         self,
-        workflow_id: Optional[str] = None,
-        execution_id: Optional[str] = None,
-        node_id: Optional[str] = None,
+        workflow_id: str | None = None,
+        execution_id: str | None = None,
+        node_id: str | None = None,
     ) -> None:
         """
         Initialize log context.
@@ -240,4 +238,3 @@ if not structlog.is_configured():
     dev_mode = dev_mode or (hasattr(sys.stdout, "isatty") and sys.stdout.isatty())
 
     configure_logging(dev_mode=dev_mode)
-

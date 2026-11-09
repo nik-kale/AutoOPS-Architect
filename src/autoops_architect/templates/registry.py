@@ -1,7 +1,7 @@
 """Template registry and template model definitions."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,65 +17,39 @@ class WorkflowTemplate(BaseModel):
     service names, parameters, and other dynamic values.
     """
 
-    id: str = Field(
-        ...,
-        description="Unique identifier for the template"
-    )
+    id: str = Field(..., description="Unique identifier for the template")
 
-    name: str = Field(
-        ...,
-        description="Human-readable template name"
-    )
+    name: str = Field(..., description="Human-readable template name")
 
-    description: str = Field(
-        ...,
-        description="Description of what this template is for"
-    )
+    description: str = Field(..., description="Description of what this template is for")
 
     category: str = Field(
         default="general",
-        description="Template category (error_investigation, latency, security, etc.)"
+        description="Template category (error_investigation, latency, security, etc.)",
     )
 
-    tags: list[str] = Field(
-        default_factory=list,
-        description="Tags for searching and filtering"
-    )
+    tags: list[str] = Field(default_factory=list, description="Tags for searching and filtering")
 
     parameters: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Template parameters with default values"
+        default_factory=dict, description="Template parameters with default values"
     )
 
-    nodes: list[Node] = Field(
-        ...,
-        description="Template nodes (may contain placeholders)"
-    )
+    nodes: list[Node] = Field(..., description="Template nodes (may contain placeholders)")
 
-    edges: list[Edge] = Field(
-        ...,
-        description="Template edges"
-    )
+    edges: list[Edge] = Field(..., description="Template edges")
 
-    author: Optional[str] = Field(
-        default=None,
-        description="Template author"
-    )
+    author: str | None = Field(default=None, description="Template author")
 
-    version: str = Field(
-        default="1.0",
-        description="Template version"
-    )
+    version: str = Field(default="1.0", description="Template version")
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When the template was created"
+        default_factory=datetime.utcnow, description="When the template was created"
     )
 
     def instantiate(
         self,
         goal_description: str,
-        service: Optional[str] = None,
+        service: str | None = None,
         **kwargs: Any,
     ) -> WorkflowGraph:
         """
@@ -160,11 +134,11 @@ class TemplateRegistry:
             raise ValueError(f"Template '{template.id}' already registered")
         self._templates[template.id] = template
 
-    def get(self, template_id: str) -> Optional[WorkflowTemplate]:
+    def get(self, template_id: str) -> WorkflowTemplate | None:
         """Get a template by ID."""
         return self._templates.get(template_id)
 
-    def list(self, category: Optional[str] = None) -> list[WorkflowTemplate]:
+    def list(self, category: str | None = None) -> list[WorkflowTemplate]:
         """
         List all templates, optionally filtered by category.
 
@@ -181,9 +155,9 @@ class TemplateRegistry:
 
     def search(
         self,
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        tags: Optional[list[str]] = None,
+        query: str | None = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
     ) -> list[WorkflowTemplate]:
         """
         Search templates by query, category, or tags.
@@ -203,15 +177,13 @@ class TemplateRegistry:
 
         if tags:
             tag_set = set(t.lower() for t in tags)
-            results = [
-                t for t in results
-                if any(tag.lower() in tag_set for tag in t.tags)
-            ]
+            results = [t for t in results if any(tag.lower() in tag_set for tag in t.tags)]
 
         if query:
             query_lower = query.lower()
             results = [
-                t for t in results
+                t
+                for t in results
                 if query_lower in t.name.lower() or query_lower in t.description.lower()
             ]
 
@@ -293,7 +265,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 2: Latency Investigation
         WorkflowTemplate(
             id="latency-investigation",
@@ -359,7 +330,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 3: Login/Auth Failures
         WorkflowTemplate(
             id="auth-failure-investigation",
@@ -421,7 +391,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 4: Database Connection Issues
         WorkflowTemplate(
             id="db-connection-investigation",
@@ -484,7 +453,6 @@ def get_builtin_templates() -> list[WorkflowTemplate]:
             ],
             author="autoops-architect",
         ),
-
         # Template 5: Memory/Resource Issues
         WorkflowTemplate(
             id="resource-investigation",

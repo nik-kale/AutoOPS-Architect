@@ -2,8 +2,8 @@
 
 from autoops_architect.planner.architect import Architect, PlannerConfig
 from autoops_architect.planner.prompts import (
-    SYSTEM_PROMPT,
     PLANNING_PROMPT_TEMPLATE,
+    SYSTEM_PROMPT,
     format_planning_prompt,
 )
 

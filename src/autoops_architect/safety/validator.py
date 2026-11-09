@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from autoops_architect.models.workflow import Node, WorkflowGraph
 from autoops_architect.safety.config import SafetyConfig, get_safety_config
@@ -10,23 +10,26 @@ from autoops_architect.safety.config import SafetyConfig, get_safety_config
 
 class ValidationSeverity(str, Enum):
     """Severity level for validation issues."""
-    ERROR = "error"      # Must be fixed, blocks execution
+
+    ERROR = "error"  # Must be fixed, blocks execution
     WARNING = "warning"  # Should be reviewed, may proceed
-    INFO = "info"        # Informational only
+    INFO = "info"  # Informational only
 
 
 @dataclass
 class ValidationIssue:
     """A single validation issue."""
+
     severity: ValidationSeverity
     message: str
-    node_id: Optional[str] = None
-    field: Optional[str] = None
+    node_id: str | None = None
+    field: str | None = None
 
 
 @dataclass
 class ValidationResult:
     """Result of safety validation."""
+
     valid: bool
     issues: list[ValidationIssue] = field(default_factory=list)
 
@@ -43,45 +46,51 @@ class ValidationResult:
     def add_error(
         self,
         message: str,
-        node_id: Optional[str] = None,
-        field: Optional[str] = None,
+        node_id: str | None = None,
+        field: str | None = None,
     ) -> None:
         """Add an error issue."""
-        self.issues.append(ValidationIssue(
-            severity=ValidationSeverity.ERROR,
-            message=message,
-            node_id=node_id,
-            field=field,
-        ))
+        self.issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=message,
+                node_id=node_id,
+                field=field,
+            )
+        )
         self.valid = False
 
     def add_warning(
         self,
         message: str,
-        node_id: Optional[str] = None,
-        field: Optional[str] = None,
+        node_id: str | None = None,
+        field: str | None = None,
     ) -> None:
         """Add a warning issue."""
-        self.issues.append(ValidationIssue(
-            severity=ValidationSeverity.WARNING,
-            message=message,
-            node_id=node_id,
-            field=field,
-        ))
+        self.issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.WARNING,
+                message=message,
+                node_id=node_id,
+                field=field,
+            )
+        )
 
     def add_info(
         self,
         message: str,
-        node_id: Optional[str] = None,
-        field: Optional[str] = None,
+        node_id: str | None = None,
+        field: str | None = None,
     ) -> None:
         """Add an informational issue."""
-        self.issues.append(ValidationIssue(
-            severity=ValidationSeverity.INFO,
-            message=message,
-            node_id=node_id,
-            field=field,
-        ))
+        self.issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.INFO,
+                message=message,
+                node_id=node_id,
+                field=field,
+            )
+        )
 
 
 class SafetyValidator:
@@ -96,7 +105,7 @@ class SafetyValidator:
     - Parameter validation
     """
 
-    def __init__(self, config: Optional[SafetyConfig] = None) -> None:
+    def __init__(self, config: SafetyConfig | None = None) -> None:
         """
         Initialize the validator.
 
@@ -137,13 +146,11 @@ class SafetyValidator:
         for edge in workflow.edges:
             if edge.from_node_id not in node_ids:
                 result.add_error(
-                    f"Edge references non-existent node: {edge.from_node_id}",
-                    field="edges"
+                    f"Edge references non-existent node: {edge.from_node_id}", field="edges"
                 )
             if edge.to_node_id not in node_ids:
                 result.add_error(
-                    f"Edge references non-existent node: {edge.to_node_id}",
-                    field="edges"
+                    f"Edge references non-existent node: {edge.to_node_id}", field="edges"
                 )
 
         # Check for cycles (simple check - orphaned nodes after topo sort)
@@ -163,8 +170,7 @@ class SafetyValidator:
             for node in workflow.nodes:
                 if node.type.value in remediation_types:
                     result.add_error(
-                        f"Remediation action '{node.type.value}' is not allowed",
-                        node_id=node.id
+                        f"Remediation action '{node.type.value}' is not allowed", node_id=node.id
                     )
 
         return result
@@ -184,32 +190,24 @@ class SafetyValidator:
         # Check node type
         node_type = node.type.value
         if not self.config.node_types.is_allowed(node_type):
-            result.add_error(
-                f"Node type '{node_type}' is not allowed",
-                node_id=node.id
-            )
+            result.add_error(f"Node type '{node_type}' is not allowed", node_id=node.id)
 
         # Check if node type requires approval
         if self.config.node_types.requires_approval(node_type):
             if not node.requires_human_approval:
                 result.add_warning(
-                    f"Node type '{node_type}' should require approval",
-                    node_id=node.id
+                    f"Node type '{node_type}' should require approval", node_id=node.id
                 )
 
         # Check tool
         if node.tool:
             if not self.config.tools.is_allowed(node.tool):
-                result.add_error(
-                    f"Tool '{node.tool}' is not allowed",
-                    node_id=node.id
-                )
+                result.add_error(f"Tool '{node.tool}' is not allowed", node_id=node.id)
 
             if self.config.tools.requires_approval(node.tool):
                 if not node.requires_human_approval:
                     result.add_warning(
-                        f"Tool '{node.tool}' should require approval",
-                        node_id=node.id
+                        f"Tool '{node.tool}' should require approval", node_id=node.id
                     )
 
         # Validate parameters
@@ -223,7 +221,7 @@ class SafetyValidator:
     def validate_params(
         self,
         params: dict[str, Any],
-        node_id: Optional[str] = None,
+        node_id: str | None = None,
     ) -> ValidationResult:
         """
         Validate node parameters for safety issues.
@@ -239,18 +237,18 @@ class SafetyValidator:
 
         # Check for potentially dangerous patterns
         dangerous_patterns = [
-            (r';\s*rm\s', "potential command injection (rm)"),
-            (r';\s*dd\s', "potential command injection (dd)"),
-            (r';\s*wget\s', "potential command injection (wget)"),
-            (r';\s*curl\s', "potential command injection (curl)"),
-            (r'\$\(', "command substitution"),
-            (r'`.*`', "command substitution (backticks)"),
-            (r'\.\./\.\./\.\./', "path traversal"),
-            (r'/etc/passwd', "sensitive file reference"),
-            (r'/etc/shadow', "sensitive file reference"),
-            (r'PRIVATE_KEY', "potential credential exposure"),
-            (r'SECRET', "potential credential exposure"),
-            (r'PASSWORD', "potential credential exposure"),
+            (r";\s*rm\s", "potential command injection (rm)"),
+            (r";\s*dd\s", "potential command injection (dd)"),
+            (r";\s*wget\s", "potential command injection (wget)"),
+            (r";\s*curl\s", "potential command injection (curl)"),
+            (r"\$\(", "command substitution"),
+            (r"`.*`", "command substitution (backticks)"),
+            (r"\.\./\.\./\.\./", "path traversal"),
+            (r"/etc/passwd", "sensitive file reference"),
+            (r"/etc/shadow", "sensitive file reference"),
+            (r"PRIVATE_KEY", "potential credential exposure"),
+            (r"SECRET", "potential credential exposure"),
+            (r"PASSWORD", "potential credential exposure"),
         ]
 
         import re
@@ -279,7 +277,7 @@ class SafetyValidator:
     def check_approval_required(
         self,
         node: Node,
-        environment: Optional[str] = None,
+        environment: str | None = None,
     ) -> bool:
         """
         Check if a node requires approval.
@@ -326,7 +324,7 @@ class SafetyValidator:
 
 def validate_workflow(
     workflow: WorkflowGraph,
-    config: Optional[SafetyConfig] = None,
+    config: SafetyConfig | None = None,
 ) -> ValidationResult:
     """
     Convenience function to validate a workflow.
@@ -344,7 +342,7 @@ def validate_workflow(
 
 def validate_node(
     node: Node,
-    config: Optional[SafetyConfig] = None,
+    config: SafetyConfig | None = None,
 ) -> ValidationResult:
     """
     Convenience function to validate a node.
@@ -362,7 +360,7 @@ def validate_node(
 
 def validate_tool_params(
     params: dict[str, Any],
-    config: Optional[SafetyConfig] = None,
+    config: SafetyConfig | None = None,
 ) -> ValidationResult:
     """
     Convenience function to validate tool parameters.

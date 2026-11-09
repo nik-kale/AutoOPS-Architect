@@ -7,7 +7,6 @@ import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,29 +15,16 @@ class EmbeddingConfig(BaseModel):
     """Configuration for embedding providers."""
 
     provider: str = Field(
-        default="local",
-        description="Embedding provider: local, openai, anthropic"
+        default="local", description="Embedding provider: local, openai, anthropic"
     )
 
-    model: Optional[str] = Field(
-        default=None,
-        description="Model name for the embedding provider"
-    )
+    model: str | None = Field(default=None, description="Model name for the embedding provider")
 
-    api_key: Optional[str] = Field(
-        default=None,
-        description="API key (if not in environment)"
-    )
+    api_key: str | None = Field(default=None, description="API key (if not in environment)")
 
-    dimension: int = Field(
-        default=384,
-        description="Embedding dimension"
-    )
+    dimension: int = Field(default=384, description="Embedding dimension")
 
-    cache_path: Optional[str] = Field(
-        default=None,
-        description="Path to embedding cache file"
-    )
+    cache_path: str | None = Field(default=None, description="Path to embedding cache file")
 
 
 class EmbeddingProvider(ABC):
@@ -77,24 +63,64 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     # Domain-specific keywords for SRE/ops contexts
     DOMAIN_KEYWORDS = {
         # Error types
-        "error": 0, "5xx": 1, "4xx": 2, "timeout": 3, "exception": 4,
-        "failure": 5, "crash": 6, "oom": 7, "panic": 8, "fatal": 9,
+        "error": 0,
+        "5xx": 1,
+        "4xx": 2,
+        "timeout": 3,
+        "exception": 4,
+        "failure": 5,
+        "crash": 6,
+        "oom": 7,
+        "panic": 8,
+        "fatal": 9,
         # Performance
-        "latency": 10, "slow": 11, "performance": 12, "p99": 13, "p95": 14,
-        "throughput": 15, "bottleneck": 16, "degradation": 17,
+        "latency": 10,
+        "slow": 11,
+        "performance": 12,
+        "p99": 13,
+        "p95": 14,
+        "throughput": 15,
+        "bottleneck": 16,
+        "degradation": 17,
         # Infrastructure
-        "kubernetes": 18, "k8s": 18, "pod": 19, "container": 20,
-        "node": 21, "cluster": 22, "deployment": 23, "service": 24,
-        "database": 25, "db": 25, "redis": 26, "postgres": 27, "mysql": 28,
+        "kubernetes": 18,
+        "k8s": 18,
+        "pod": 19,
+        "container": 20,
+        "node": 21,
+        "cluster": 22,
+        "deployment": 23,
+        "service": 24,
+        "database": 25,
+        "db": 25,
+        "redis": 26,
+        "postgres": 27,
+        "mysql": 28,
         # Operations
-        "investigation": 29, "debug": 30, "troubleshoot": 31, "diagnose": 32,
-        "monitor": 33, "alert": 34, "incident": 35, "outage": 36,
+        "investigation": 29,
+        "debug": 30,
+        "troubleshoot": 31,
+        "diagnose": 32,
+        "monitor": 33,
+        "alert": 34,
+        "incident": 35,
+        "outage": 36,
         # Security
-        "auth": 37, "authentication": 37, "login": 38, "security": 39,
-        "permission": 40, "access": 41, "token": 42,
+        "auth": 37,
+        "authentication": 37,
+        "login": 38,
+        "security": 39,
+        "permission": 40,
+        "access": 41,
+        "token": 42,
         # Resources
-        "memory": 43, "cpu": 44, "disk": 45, "network": 46,
-        "connection": 47, "pool": 48, "resource": 49,
+        "memory": 43,
+        "cpu": 44,
+        "disk": 45,
+        "network": 46,
+        "connection": 47,
+        "pool": 48,
+        "resource": 49,
     }
 
     def __init__(self, dimension: int = 384) -> None:
@@ -113,7 +139,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         embedding = [0.0] * self._dimension
 
         text_lower = text.lower()
-        words = re.findall(r'\w+', text_lower)
+        words = re.findall(r"\w+", text_lower)
 
         # 1. Domain keyword features (first 50 dimensions)
         for word in words:
@@ -126,7 +152,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         trigram_end = self._dimension // 2
 
         for i in range(len(text_lower) - 2):
-            trigram = text_lower[i:i+3]
+            trigram = text_lower[i : i + 3]
             # Hash the trigram to a position
             h = int(hashlib.md5(trigram.encode()).hexdigest(), 16)
             idx = trigram_start + (h % (trigram_end - trigram_start))
@@ -163,7 +189,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "text-embedding-3-small",
     ) -> None:
         """Initialize OpenAI embedding provider."""
@@ -228,7 +254,7 @@ class EmbeddingCache:
         """Load cache from disk."""
         if self.cache_path.exists():
             try:
-                with open(self.cache_path, "r") as f:
+                with open(self.cache_path) as f:
                     self._cache = json.load(f)
             except (json.JSONDecodeError, Exception):
                 self._cache = {}
@@ -242,7 +268,7 @@ class EmbeddingCache:
         """Generate hash for text."""
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
-    def get(self, text: str) -> Optional[list[float]]:
+    def get(self, text: str) -> list[float] | None:
         """Get cached embedding."""
         key = self._hash_text(text)
         return self._cache.get(key)
@@ -292,7 +318,7 @@ def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
     return dot_product / (magnitude1 * magnitude2)
 
 
-def get_embedding_provider(config: Optional[EmbeddingConfig] = None) -> EmbeddingProvider:
+def get_embedding_provider(config: EmbeddingConfig | None = None) -> EmbeddingProvider:
     """
     Factory function to get an embedding provider.
 
@@ -324,8 +350,8 @@ class SemanticSearcher:
 
     def __init__(
         self,
-        provider: Optional[EmbeddingProvider] = None,
-        cache: Optional[EmbeddingCache] = None,
+        provider: EmbeddingProvider | None = None,
+        cache: EmbeddingCache | None = None,
     ) -> None:
         """Initialize semantic searcher."""
         self.provider = provider or LocalEmbeddingProvider()

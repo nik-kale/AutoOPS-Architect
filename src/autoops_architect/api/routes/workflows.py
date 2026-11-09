@@ -3,15 +3,15 @@
 import asyncio
 import os
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from autoops_architect.api.models import (
     EdgeResponse,
-    ExecutionRequest,
     ExecutionResponse,
     ExecutionStatus,
     GoalRequest,
@@ -21,7 +21,6 @@ from autoops_architect.api.models import (
     WorkflowUpdateRequest,
 )
 from autoops_architect.executor.engine import WorkflowExecutor
-from autoops_architect.models.execution import NodeStatus
 from autoops_architect.models.goal import Environment, Goal, Priority
 from autoops_architect.models.workflow import WorkflowGraph
 from autoops_architect.planner.architect import Architect, PlannerConfig
@@ -32,17 +31,21 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 # Check if authentication is enabled
 AUTH_ENABLED = os.getenv("AUTOOPS_AUTH_ENABLED", "false").lower() == "true"
 
+
 # Optional authentication dependency
 def get_auth_dependency():
     """Get authentication dependency if auth is enabled."""
     if AUTH_ENABLED:
         from autoops_architect.api.auth import require_permission
+
         return require_permission("execute:workflows")
     else:
         # No auth required - return a dummy dependency that always succeeds
         async def no_auth():
             return None
+
         return no_auth
+
 
 # In-memory storage for active workflows and executions
 # In production, this would be backed by a database
@@ -382,7 +385,7 @@ async def stream_execution(
 
             await asyncio.sleep(0.5)
 
-        yield "data: {\"event_type\": \"stream_end\"}\n\n"
+        yield 'data: {"event_type": "stream_end"}\n\n'
 
     return StreamingResponse(
         event_generator(),
@@ -405,12 +408,8 @@ async def get_execution_status(
 
     execution = _active_executions[execution_id]
 
-    success_count = sum(
-        1 for r in execution["node_results"] if r.get("status") == "success"
-    )
-    failed_count = sum(
-        1 for r in execution["node_results"] if r.get("status") == "failed"
-    )
+    success_count = sum(1 for r in execution["node_results"] if r.get("status") == "success")
+    failed_count = sum(1 for r in execution["node_results"] if r.get("status") == "failed")
 
     return ExecutionResponse(
         execution_id=execution_id,

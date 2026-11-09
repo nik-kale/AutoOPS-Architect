@@ -3,8 +3,9 @@
 import asyncio
 import operator
 import re
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -15,7 +16,7 @@ from autoops_architect.models.execution import (
     WorkflowRunResult,
 )
 from autoops_architect.models.workflow import Edge, Node, WorkflowGraph
-from autoops_architect.tools.base import Tool, ToolRegistry, ToolResult, ToolStatus
+from autoops_architect.tools.base import ToolRegistry, ToolStatus
 
 logger = get_logger(__name__)
 
@@ -118,8 +119,9 @@ class ConditionEvaluator:
     def _resolve_value(self, token: str) -> Any:
         """Resolve a token to its actual value."""
         # Handle string literals
-        if (token.startswith("'") and token.endswith("'")) or \
-           (token.startswith('"') and token.endswith('"')):
+        if (token.startswith("'") and token.endswith("'")) or (
+            token.startswith('"') and token.endswith('"')
+        ):
             return token[1:-1]
 
         # Handle numeric literals
@@ -175,7 +177,7 @@ class ExecutionCallback(Protocol):
         self,
         node_id: str,
         status: ExecutionStatus,
-        result: Optional[NodeResult] = None,
+        result: NodeResult | None = None,
     ) -> None:
         """Called when a node's status changes."""
         ...
@@ -185,38 +187,26 @@ class ExecutorConfig(BaseModel):
     """Configuration for the workflow executor."""
 
     max_concurrency: int = Field(
-        default=1,
-        ge=1,
-        le=10,
-        description="Maximum number of nodes to execute in parallel"
+        default=1, ge=1, le=10, description="Maximum number of nodes to execute in parallel"
     )
 
     default_timeout_seconds: int = Field(
-        default=120,
-        ge=1,
-        le=3600,
-        description="Default timeout for node execution"
+        default=120, ge=1, le=3600, description="Default timeout for node execution"
     )
 
     stop_on_failure: bool = Field(
-        default=True,
-        description="Whether to stop execution when a node fails"
+        default=True, description="Whether to stop execution when a node fails"
     )
 
     require_approval_for_dangerous: bool = Field(
-        default=True,
-        description="Require human approval for dangerous operations"
+        default=True, description="Require human approval for dangerous operations"
     )
 
     auto_approve: bool = Field(
-        default=False,
-        description="Automatically approve all approval requests (use with caution)"
+        default=False, description="Automatically approve all approval requests (use with caution)"
     )
 
-    dry_run: bool = Field(
-        default=False,
-        description="Simulate execution without running tools"
-    )
+    dry_run: bool = Field(default=False, description="Simulate execution without running tools")
 
 
 class WorkflowExecutor:
@@ -238,9 +228,9 @@ class WorkflowExecutor:
 
     def __init__(
         self,
-        config: Optional[ExecutorConfig] = None,
-        tool_registry: Optional[ToolRegistry] = None,
-        approval_callback: Optional[Callable[[Node], bool]] = None,
+        config: ExecutorConfig | None = None,
+        tool_registry: ToolRegistry | None = None,
+        approval_callback: Callable[[Node], bool] | None = None,
     ) -> None:
         """
         Initialize the executor.
@@ -262,6 +252,7 @@ class WorkflowExecutor:
     def _create_default_registry(self) -> ToolRegistry:
         """Create a default tool registry with built-in tools."""
         from autoops_architect.tools.base import create_default_registry
+
         return create_default_registry()
 
     def add_status_callback(self, callback: ExecutionCallback) -> None:
@@ -272,7 +263,7 @@ class WorkflowExecutor:
         self,
         node_id: str,
         status: ExecutionStatus,
-        result: Optional[NodeResult] = None,
+        result: NodeResult | None = None,
     ) -> None:
         """Notify all callbacks of a status change."""
         for callback in self._status_callbacks:
@@ -284,7 +275,7 @@ class WorkflowExecutor:
     async def execute(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Execute a workflow graph.
@@ -349,7 +340,9 @@ class WorkflowExecutor:
             # Check if dependencies are satisfied
             deps = workflow.get_dependencies(node.id)
             deps_failed = any(d in failed_nodes for d in deps)
-            deps_skipped_by_condition = all(d in skipped_by_condition for d in deps) if deps else False
+            deps_skipped_by_condition = (
+                all(d in skipped_by_condition for d in deps) if deps else False
+            )
 
             # Check edge conditions - all incoming edges with conditions must pass
             incoming_edges = edges_to_node.get(node.id, [])
@@ -364,7 +357,7 @@ class WorkflowExecutor:
 
             if not edge_conditions_met:
                 # Skip this node - condition not met
-                node_result.mark_skipped(f"Edge condition not met")
+                node_result.mark_skipped("Edge condition not met")
                 skipped_by_condition.add(node.id)
                 self._notify_status(node.id, ExecutionStatus.SKIPPED, node_result)
                 continue
@@ -394,9 +387,7 @@ class WorkflowExecutor:
                     else:
                         # No approval callback - mark as waiting
                         node_result.status = ExecutionStatus.WAITING_APPROVAL
-                        self._notify_status(
-                            node.id, ExecutionStatus.WAITING_APPROVAL, node_result
-                        )
+                        self._notify_status(node.id, ExecutionStatus.WAITING_APPROVAL, node_result)
                         # In a real implementation, we would wait for approval
                         # For now, skip the node
                         node_result.mark_skipped("No approval mechanism available")
@@ -454,8 +445,13 @@ class WorkflowExecutor:
                         )
                         # Mark remaining nodes as skipped
                         for remaining in execution_order:
-                            if remaining.id not in completed_nodes and remaining.id not in failed_nodes:
-                                node_results[remaining.id].mark_skipped("Execution stopped due to failure")
+                            if (
+                                remaining.id not in completed_nodes
+                                and remaining.id not in failed_nodes
+                            ):
+                                node_results[remaining.id].mark_skipped(
+                                    "Execution stopped due to failure"
+                                )
                         break
 
             self._notify_status(node.id, node_result.status, node_result)
@@ -515,7 +511,7 @@ class WorkflowExecutor:
             else:
                 result.mark_failed(tool_result.error_message or "Tool execution failed")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result.mark_failed(f"Execution timed out after {timeout} seconds")
 
     async def _dry_run_node(
@@ -527,12 +523,14 @@ class WorkflowExecutor:
         # Just mark as success with mock outputs
         await asyncio.sleep(0.1)  # Simulate some work
 
-        result.mark_success({
-            "dry_run": True,
-            "node_id": node.id,
-            "tool": node.tool,
-            "params": node.params,
-        })
+        result.mark_success(
+            {
+                "dry_run": True,
+                "node_id": node.id,
+                "tool": node.tool,
+                "params": node.params,
+            }
+        )
         result.raw_output = f"[DRY RUN] Would execute {node.tool} with params: {node.params}"
 
     def _get_dependency_outputs(self, node_id: str) -> dict[str, dict[str, Any]]:
@@ -543,7 +541,7 @@ class WorkflowExecutor:
     async def execute_parallel(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Execute a workflow graph with parallel node execution.
@@ -692,7 +690,9 @@ class WorkflowExecutor:
                     if remaining_level in levels:
                         for node in levels[remaining_level]:
                             if node.id not in completed_nodes and node.id not in failed_nodes:
-                                node_results[node.id].mark_skipped("Execution stopped due to failure")
+                                node_results[node.id].mark_skipped(
+                                    "Execution stopped due to failure"
+                                )
                                 skipped_nodes.add(node.id)
                 break
 
@@ -746,7 +746,7 @@ class WorkflowExecutor:
     def execute_sync(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """
         Synchronous wrapper for execute().
@@ -778,7 +778,7 @@ class WorkflowExecutor:
     async def execute_single_node(
         self,
         node: Node,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> NodeResult:
         """
         Execute a single node independently.
@@ -829,7 +829,7 @@ class InteractiveExecutor(WorkflowExecutor):
     async def execute_interactive(
         self,
         workflow: WorkflowGraph,
-        initial_context: Optional[dict[str, Any]] = None,
+        initial_context: dict[str, Any] | None = None,
     ):
         """
         Execute workflow interactively, yielding after each node.

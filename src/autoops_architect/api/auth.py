@@ -4,7 +4,7 @@ import os
 import secrets
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import bcrypt
 import jwt
@@ -12,7 +12,6 @@ from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError as JWTError
 from pydantic import BaseModel, Field
-
 
 # Configuration
 SECRET_KEY = os.getenv("AUTOOPS_SECRET_KEY", secrets.token_urlsafe(32))
@@ -62,8 +61,8 @@ class User(BaseModel):
     """User model."""
 
     username: str = Field(..., min_length=3, max_length=50)
-    email: Optional[str] = None
-    full_name: Optional[str] = None
+    email: str | None = None
+    full_name: str | None = None
     disabled: bool = False
     roles: list[Role] = Field(default_factory=lambda: [Role.VIEWER])
 
@@ -85,7 +84,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     """Token payload data."""
 
-    username: Optional[str] = None
+    username: str | None = None
     roles: list[Role] = Field(default_factory=list)
 
 
@@ -96,7 +95,7 @@ class APIKey(BaseModel):
     name: str
     roles: list[Role]
     created_at: datetime
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
     disabled: bool = False
 
 
@@ -124,12 +123,12 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("ascii")
 
 
-def get_user(username: str) -> Optional[UserInDB]:
+def get_user(username: str) -> UserInDB | None:
     """Get a user from the database."""
     return fake_users_db.get(username)
 
 
-def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
+def authenticate_user(username: str, password: str) -> UserInDB | None:
     """Authenticate a user with username and password."""
     user = get_user(username)
     if not user:
@@ -139,9 +138,7 @@ def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
     return user
 
 
-def create_access_token(
-    data: dict[str, Any], expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
     if expires_delta:
@@ -175,7 +172,7 @@ def decode_access_token(token: str) -> TokenData:
         )
 
 
-def validate_api_key(api_key: str) -> Optional[APIKey]:
+def validate_api_key(api_key: str) -> APIKey | None:
     """Validate an API key."""
     key_data = fake_api_keys_db.get(api_key)
     if not key_data:
@@ -188,8 +185,8 @@ def validate_api_key(api_key: str) -> Optional[APIKey]:
 
 
 async def get_current_user(
-    bearer_token: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_header),
+    bearer_token: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    api_key: str | None = Security(api_key_header),
 ) -> User:
     """
     Get the current authenticated user.
@@ -285,7 +282,7 @@ def create_default_admin(username: str = "admin", password: str = "admin") -> Us
 def create_api_key(
     name: str,
     roles: list[Role],
-    expires_days: Optional[int] = None,
+    expires_days: int | None = None,
 ) -> tuple[str, APIKey]:
     """Create a new API key."""
     key = secrets.token_urlsafe(32)
@@ -310,4 +307,3 @@ if not fake_users_db and os.getenv("AUTOOPS_CREATE_ADMIN", "false").lower() == "
     default_admin = create_default_admin()
     print(f"Created default admin user: {default_admin.username}")
     print("Default password: admin (CHANGE THIS IN PRODUCTION!)")
-

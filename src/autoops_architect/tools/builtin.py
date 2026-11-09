@@ -1,9 +1,8 @@
 """Built-in tools for AutoOps Architect."""
 
-import json
 import random
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from autoops_architect.tools.base import Tool, ToolConfig, ToolResult
 
@@ -29,17 +28,14 @@ class EchoTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "Message to echo"
-                },
+                "message": {"type": "string", "description": "Message to echo"},
             },
         }
 
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Echo the input parameters."""
         message = params.get("message", "No message provided")
@@ -76,23 +72,17 @@ class LogCollectorTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "service": {
-                    "type": "string",
-                    "description": "Service name to collect logs from"
-                },
+                "service": {"type": "string", "description": "Service name to collect logs from"},
                 "duration": {
                     "type": "string",
-                    "description": "Time duration (e.g., '1h', '30m', '24h')"
+                    "description": "Time duration (e.g., '1h', '30m', '24h')",
                 },
                 "level": {
                     "type": "string",
                     "enum": ["debug", "info", "warn", "error"],
-                    "description": "Minimum log level to collect"
+                    "description": "Minimum log level to collect",
                 },
-                "query": {
-                    "type": "string",
-                    "description": "Optional search query"
-                },
+                "query": {"type": "string", "description": "Optional search query"},
             },
             "required": ["service"],
         }
@@ -100,7 +90,7 @@ class LogCollectorTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Collect logs from the specified service."""
         service = params.get("service", "unknown")
@@ -154,13 +144,15 @@ class LogCollectorTool(Tool):
         for i in range(50):
             level, msg = random.choice(messages)
             if levels.index(level) >= level_idx:
-                entries.append({
-                    "timestamp": (base_time - timedelta(minutes=i)).isoformat(),
-                    "level": level,
-                    "service": service,
-                    "message": msg,
-                    "trace_id": f"trace-{random.randint(1000, 9999)}",
-                })
+                entries.append(
+                    {
+                        "timestamp": (base_time - timedelta(minutes=i)).isoformat(),
+                        "level": level,
+                        "service": service,
+                        "message": msg,
+                        "trace_id": f"trace-{random.randint(1000, 9999)}",
+                    }
+                )
 
         return entries
 
@@ -169,8 +161,7 @@ class LogCollectorTool(Tool):
         lines = []
         for log in logs[:20]:  # Limit output
             lines.append(
-                f"[{log['timestamp']}] [{log['level'].upper()}] "
-                f"{log['service']}: {log['message']}"
+                f"[{log['timestamp']}] [{log['level'].upper()}] {log['service']}: {log['message']}"
             )
         return "\n".join(lines)
 
@@ -196,21 +187,15 @@ class MetricQueryTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Metric query (e.g., PromQL)"
-                },
-                "service": {
-                    "type": "string",
-                    "description": "Service to query metrics for"
-                },
+                "query": {"type": "string", "description": "Metric query (e.g., PromQL)"},
+                "service": {"type": "string", "description": "Service to query metrics for"},
                 "metric_name": {
                     "type": "string",
-                    "description": "Metric name (e.g., 'http_requests_total')"
+                    "description": "Metric name (e.g., 'http_requests_total')",
                 },
                 "duration": {
                     "type": "string",
-                    "description": "Time range (e.g., '1h', '6h', '24h')"
+                    "description": "Time range (e.g., '1h', '6h', '24h')",
                 },
             },
         }
@@ -218,7 +203,7 @@ class MetricQueryTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Query metrics from monitoring system."""
         service = params.get("service", "unknown")
@@ -235,14 +220,16 @@ class MetricQueryTool(Tool):
                 "duration": duration,
                 "data_points": len(metrics["values"]),
                 "current_value": metrics["values"][-1] if metrics["values"] else 0,
-                "avg_value": sum(metrics["values"]) / len(metrics["values"]) if metrics["values"] else 0,
+                "avg_value": sum(metrics["values"]) / len(metrics["values"])
+                if metrics["values"]
+                else 0,
                 "max_value": max(metrics["values"]) if metrics["values"] else 0,
                 "min_value": min(metrics["values"]) if metrics["values"] else 0,
                 "metrics": metrics,
             },
             raw_output=f"Metric: {metric_name} for {service}\n"
-                      f"Current: {metrics['values'][-1] if metrics['values'] else 'N/A'}\n"
-                      f"Points: {len(metrics['values'])}",
+            f"Current: {metrics['values'][-1] if metrics['values'] else 'N/A'}\n"
+            f"Points: {len(metrics['values'])}",
         )
 
     def _generate_sample_metrics(
@@ -299,34 +286,19 @@ class TraceCollectorTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "service": {
-                    "type": "string",
-                    "description": "Service name to collect traces from"
-                },
-                "trace_id": {
-                    "type": "string",
-                    "description": "Specific trace ID to retrieve"
-                },
+                "service": {"type": "string", "description": "Service name to collect traces from"},
+                "trace_id": {"type": "string", "description": "Specific trace ID to retrieve"},
                 "duration": {
                     "type": "string",
-                    "description": "Time duration (e.g., '1h', '30m', '24h')"
+                    "description": "Time duration (e.g., '1h', '30m', '24h')",
                 },
-                "operation": {
-                    "type": "string",
-                    "description": "Filter by operation name"
-                },
+                "operation": {"type": "string", "description": "Filter by operation name"},
                 "min_duration_ms": {
                     "type": "integer",
-                    "description": "Minimum span duration to include (ms)"
+                    "description": "Minimum span duration to include (ms)",
                 },
-                "error_only": {
-                    "type": "boolean",
-                    "description": "Only return traces with errors"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of traces to return"
-                },
+                "error_only": {"type": "boolean", "description": "Only return traces with errors"},
+                "limit": {"type": "integer", "description": "Maximum number of traces to return"},
             },
             "required": ["service"],
         }
@@ -334,7 +306,7 @@ class TraceCollectorTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Collect traces from the specified service."""
         service = params.get("service", "unknown")
@@ -435,13 +407,15 @@ class TraceCollectorTool(Tool):
             }
 
             if has_error:
-                trace["error_message"] = random.choice([
-                    "Connection timeout to downstream service",
-                    "Database query failed",
-                    "Service unavailable",
-                    "Request validation failed",
-                    "Circuit breaker open",
-                ])
+                trace["error_message"] = random.choice(
+                    [
+                        "Connection timeout to downstream service",
+                        "Database query failed",
+                        "Service unavailable",
+                        "Request validation failed",
+                        "Circuit breaker open",
+                    ]
+                )
 
             traces.append(trace)
 
@@ -473,15 +447,17 @@ class TraceCollectorTool(Tool):
 
         for span_name, span_service, duration_fraction in span_templates:
             span_duration = total_duration * duration_fraction
-            spans.append({
-                "span_id": f"span-{random.randint(10000, 99999)}",
-                "operation_name": span_name,
-                "service": span_service,
-                "start_offset_ms": round(current_offset, 2),
-                "duration_ms": round(span_duration, 2),
-                "tags": {},
-                "logs": [],
-            })
+            spans.append(
+                {
+                    "span_id": f"span-{random.randint(10000, 99999)}",
+                    "operation_name": span_name,
+                    "service": span_service,
+                    "start_offset_ms": round(current_offset, 2),
+                    "duration_ms": round(span_duration, 2),
+                    "tags": {},
+                    "logs": [],
+                }
+            )
             current_offset += span_duration * random.uniform(0.8, 1.2)
 
         return {
@@ -538,20 +514,24 @@ class TraceCollectorTool(Tool):
 
         if traces:
             durations = [t["duration_ms"] for t in traces]
-            lines.extend([
-                f"Duration Stats:",
-                f"  Avg: {sum(durations)/len(durations):.2f}ms",
-                f"  Min: {min(durations):.2f}ms",
-                f"  Max: {max(durations):.2f}ms",
-                f"  P95: {self._percentile(durations, 95):.2f}ms",
-                f"  P99: {self._percentile(durations, 99):.2f}ms",
-            ])
+            lines.extend(
+                [
+                    "Duration Stats:",
+                    f"  Avg: {sum(durations) / len(durations):.2f}ms",
+                    f"  Min: {min(durations):.2f}ms",
+                    f"  Max: {max(durations):.2f}ms",
+                    f"  P95: {self._percentile(durations, 95):.2f}ms",
+                    f"  P99: {self._percentile(durations, 99):.2f}ms",
+                ]
+            )
 
         if error_traces:
-            lines.extend([
-                "",
-                "Error Traces:",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "Error Traces:",
+                ]
+            )
             for trace in error_traces[:5]:
                 lines.append(
                     f"  - {trace['trace_id']}: {trace.get('error_message', 'Unknown error')}"
@@ -584,7 +564,7 @@ class AnalysisTool(Tool):
                 "analysis_type": {
                     "type": "string",
                     "enum": ["error_patterns", "latency", "anomaly_detection"],
-                    "description": "Type of analysis to perform"
+                    "description": "Type of analysis to perform",
                 },
             },
         }
@@ -592,7 +572,7 @@ class AnalysisTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Analyze data from previous steps."""
         analysis_type = params.get("analysis_type", "error_patterns")
@@ -622,8 +602,8 @@ class AnalysisTool(Tool):
 
     def _analyze(
         self,
-        log_data: Optional[list],
-        metric_data: Optional[dict],
+        log_data: list | None,
+        metric_data: dict | None,
         analysis_type: str,
     ) -> list[dict[str, Any]]:
         """Perform analysis on the data."""
@@ -632,20 +612,24 @@ class AnalysisTool(Tool):
         if log_data:
             error_logs = [l for l in log_data if l.get("level") == "error"]
             if error_logs:
-                findings.append({
-                    "type": "error_pattern",
-                    "description": f"Found {len(error_logs)} error log entries",
-                    "severity": "high" if len(error_logs) > 5 else "medium",
-                    "samples": error_logs[:3],
-                })
+                findings.append(
+                    {
+                        "type": "error_pattern",
+                        "description": f"Found {len(error_logs)} error log entries",
+                        "severity": "high" if len(error_logs) > 5 else "medium",
+                        "samples": error_logs[:3],
+                    }
+                )
 
             warn_logs = [l for l in log_data if l.get("level") == "warn"]
             if warn_logs:
-                findings.append({
-                    "type": "warning_pattern",
-                    "description": f"Found {len(warn_logs)} warning entries",
-                    "severity": "low",
-                })
+                findings.append(
+                    {
+                        "type": "warning_pattern",
+                        "description": f"Found {len(warn_logs)} warning entries",
+                        "severity": "low",
+                    }
+                )
 
         if metric_data:
             values = metric_data.get("values", [])
@@ -654,18 +638,22 @@ class AnalysisTool(Tool):
                 max_val = max(values)
 
                 if max_val > avg * 2:
-                    findings.append({
-                        "type": "metric_spike",
-                        "description": f"Detected metric spike: max {max_val:.2f} vs avg {avg:.2f}",
-                        "severity": "medium",
-                    })
+                    findings.append(
+                        {
+                            "type": "metric_spike",
+                            "description": f"Detected metric spike: max {max_val:.2f} vs avg {avg:.2f}",
+                            "severity": "medium",
+                        }
+                    )
 
         if not findings:
-            findings.append({
-                "type": "no_issues",
-                "description": "No significant issues detected in the analyzed data",
-                "severity": "info",
-            })
+            findings.append(
+                {
+                    "type": "no_issues",
+                    "description": "No significant issues detected in the analyzed data",
+                    "severity": "info",
+                }
+            )
 
         return findings
 
@@ -714,8 +702,8 @@ class SummaryTool(Tool):
 
     def __init__(
         self,
-        config: Optional[ToolConfig] = None,
-        llm_client: Optional[Any] = None,
+        config: ToolConfig | None = None,
+        llm_client: Any | None = None,
     ) -> None:
         super().__init__(config)
         self._llm_client = llm_client
@@ -736,11 +724,11 @@ class SummaryTool(Tool):
                 "format": {
                     "type": "string",
                     "enum": ["brief", "detailed", "markdown"],
-                    "description": "Summary format"
+                    "description": "Summary format",
                 },
                 "include_recommendations": {
                     "type": "boolean",
-                    "description": "Whether to include recommendations"
+                    "description": "Whether to include recommendations",
                 },
             },
         }
@@ -748,7 +736,7 @@ class SummaryTool(Tool):
     async def execute(
         self,
         params: dict[str, Any],
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Generate a summary of the workflow execution."""
         summary_format = params.get("format", "brief")
@@ -759,9 +747,7 @@ class SummaryTool(Tool):
 
         # Generate summary
         if self._llm_client:
-            summary_text = await self._generate_llm_summary(
-                summary_data, summary_format
-            )
+            summary_text = await self._generate_llm_summary(summary_data, summary_format)
         else:
             summary_text = self._generate_template_summary(
                 summary_data, summary_format, include_recommendations
@@ -778,7 +764,7 @@ class SummaryTool(Tool):
 
     def _gather_context(
         self,
-        context: Optional[dict[str, Any]],
+        context: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Gather relevant data from execution context."""
         data: dict[str, Any] = {

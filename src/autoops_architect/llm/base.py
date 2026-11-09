@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,95 +18,48 @@ class LLMProvider(str, Enum):
 class LLMConfig(BaseModel):
     """Configuration for an LLM client."""
 
-    provider: LLMProvider = Field(
-        default=LLMProvider.MOCK,
-        description="LLM provider to use"
+    provider: LLMProvider = Field(default=LLMProvider.MOCK, description="LLM provider to use")
+
+    model: str = Field(default="gpt-4", description="Model identifier")
+
+    api_key: str | None = Field(
+        default=None, description="API key (can also be set via environment variable)"
     )
 
-    model: str = Field(
-        default="gpt-4",
-        description="Model identifier"
-    )
+    base_url: str | None = Field(default=None, description="Custom base URL for the API")
 
-    api_key: Optional[str] = Field(
-        default=None,
-        description="API key (can also be set via environment variable)"
-    )
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
 
-    base_url: Optional[str] = Field(
-        default=None,
-        description="Custom base URL for the API"
-    )
+    max_tokens: int = Field(default=4096, ge=1, le=128000, description="Maximum tokens in response")
 
-    temperature: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=2.0,
-        description="Sampling temperature"
-    )
-
-    max_tokens: int = Field(
-        default=4096,
-        ge=1,
-        le=128000,
-        description="Maximum tokens in response"
-    )
-
-    timeout_seconds: int = Field(
-        default=60,
-        ge=1,
-        le=300,
-        description="Request timeout in seconds"
-    )
+    timeout_seconds: int = Field(default=60, ge=1, le=300, description="Request timeout in seconds")
 
     retry_count: int = Field(
-        default=3,
-        ge=0,
-        le=10,
-        description="Number of retry attempts on failure"
+        default=3, ge=0, le=10, description="Number of retry attempts on failure"
     )
 
 
 class LLMMessage(BaseModel):
     """A single message in a conversation."""
 
-    role: str = Field(
-        ...,
-        description="Message role: system, user, or assistant"
-    )
+    role: str = Field(..., description="Message role: system, user, or assistant")
 
-    content: str = Field(
-        ...,
-        description="Message content"
-    )
+    content: str = Field(..., description="Message content")
 
 
 class LLMResponse(BaseModel):
     """Response from an LLM completion request."""
 
-    content: str = Field(
-        ...,
-        description="The generated text content"
-    )
+    content: str = Field(..., description="The generated text content")
 
-    model: str = Field(
-        default="",
-        description="Model that generated the response"
-    )
+    model: str = Field(default="", description="Model that generated the response")
 
-    usage: dict[str, int] = Field(
-        default_factory=dict,
-        description="Token usage statistics"
-    )
+    usage: dict[str, int] = Field(default_factory=dict, description="Token usage statistics")
 
-    finish_reason: Optional[str] = Field(
-        default=None,
-        description="Reason the generation stopped"
-    )
+    finish_reason: str | None = Field(default=None, description="Reason the generation stopped")
 
-    raw_response: Optional[dict[str, Any]] = Field(
-        default=None,
-        description="Raw response from the provider"
+    raw_response: dict[str, Any] | None = Field(
+        default=None, description="Raw response from the provider"
     )
 
 
@@ -154,7 +107,7 @@ class LLMClient(ABC):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -204,7 +157,7 @@ class LLMClient(ABC):
     def sync_complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -236,9 +189,9 @@ class LLMError(Exception):
     def __init__(
         self,
         message: str,
-        provider: Optional[str] = None,
-        status_code: Optional[int] = None,
-        response: Optional[dict[str, Any]] = None,
+        provider: str | None = None,
+        status_code: int | None = None,
+        response: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider

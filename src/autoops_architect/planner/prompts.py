@@ -1,7 +1,5 @@
 """Prompt templates for the Architect planner."""
 
-from typing import Optional
-
 from jinja2 import Template
 
 SYSTEM_PROMPT = """You are AutoOps Architect, an expert SRE and operations automation system.
@@ -149,9 +147,9 @@ Generate the workflow now:
 
 def format_planning_prompt(
     goal: "Goal",  # type: ignore[name-defined]
-    similar_workflows: Optional[list] = None,
-    available_tools: Optional[list[str]] = None,
-    constraints: Optional[list[str]] = None,
+    similar_workflows: list | None = None,
+    available_tools: list[str] | None = None,
+    constraints: list[str] | None = None,
 ) -> str:
     """
     Format the planning prompt with the given goal and context.

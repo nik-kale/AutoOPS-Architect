@@ -1,7 +1,5 @@
 """Memory-related API routes."""
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query
 
 from autoops_architect.api.models import MemoryEntryResponse

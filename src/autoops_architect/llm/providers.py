@@ -2,18 +2,17 @@
 
 import json
 import os
-import re
-from typing import Any, Optional
+from typing import Any
 
 from autoops_architect.llm.base import (
+    LLMAuthenticationError,
     LLMClient,
     LLMConfig,
     LLMError,
     LLMMessage,
     LLMProvider,
-    LLMResponse,
-    LLMAuthenticationError,
     LLMRateLimitError,
+    LLMResponse,
     LLMTimeoutError,
 )
 
@@ -32,7 +31,7 @@ class OpenAIClient(LLMClient):
 
     def __init__(self, config: LLMConfig) -> None:
         super().__init__(config)
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Lazy initialization of the OpenAI client."""
@@ -102,7 +101,7 @@ class OpenAIClient(LLMClient):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate a JSON completion using OpenAI API."""
@@ -141,7 +140,7 @@ class AnthropicClient(LLMClient):
 
     def __init__(self, config: LLMConfig) -> None:
         super().__init__(config)
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Lazy initialization of the Anthropic client."""
@@ -229,7 +228,7 @@ class AnthropicClient(LLMClient):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate a JSON completion using Anthropic API."""
@@ -258,7 +257,7 @@ class AnthropicClient(LLMClient):
             # Find the end of the opening fence
             first_newline = content.find("\n")
             if first_newline != -1:
-                content = content[first_newline + 1:]
+                content = content[first_newline + 1 :]
             # Remove closing fence
             if content.endswith("```"):
                 content = content[:-3]
@@ -281,8 +280,8 @@ class MockLLMClient(LLMClient):
     def __init__(
         self,
         config: LLMConfig,
-        responses: Optional[list[str]] = None,
-        json_responses: Optional[list[dict[str, Any]]] = None,
+        responses: list[str] | None = None,
+        json_responses: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(config)
         self.responses = responses or []
@@ -317,7 +316,7 @@ class MockLLMClient(LLMClient):
     async def complete_json(
         self,
         messages: list[LLMMessage],
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Return a mock JSON response."""
@@ -387,7 +386,7 @@ class MockLLMClient(LLMClient):
         self.call_history.clear()
 
 
-def get_llm_client(config: Optional[LLMConfig] = None) -> LLMClient:
+def get_llm_client(config: LLMConfig | None = None) -> LLMClient:
     """
     Factory function to get an LLM client based on configuration.
 

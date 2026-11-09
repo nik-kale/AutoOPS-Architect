@@ -2,12 +2,10 @@
 
 import json
 import tempfile
-from pathlib import Path
-from typing import Any
 
 import pytest
 
-from autoops_architect.llm.base import LLMConfig, LLMMessage, LLMProvider, LLMResponse
+from autoops_architect.llm.base import LLMConfig, LLMMessage, LLMProvider
 from autoops_architect.llm.cache import (
     CacheConfig,
     CacheEntry,
@@ -395,7 +393,6 @@ class TestArchitectCacheIntegration:
 
     async def test_planner_with_cache_enabled(self) -> None:
         """Test that planner uses cached client when configured."""
-        from autoops_architect.models.goal import Environment, Goal
         from autoops_architect.planner.architect import Architect, PlannerConfig
 
         cache_config = CacheConfig(enabled=True, backend="memory")
@@ -414,4 +411,3 @@ class TestArchitectCacheIntegration:
 
         # Check that the LLM client is not wrapped (it's the base client)
         assert not isinstance(architect.llm_client, CachedLLMClient)
-

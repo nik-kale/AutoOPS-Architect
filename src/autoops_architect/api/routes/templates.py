@@ -1,13 +1,11 @@
 """Template-related API routes."""
 
 import re
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from autoops_architect.api.models import TemplateResponse, WorkflowResponse
 from autoops_architect.api.routes.workflows import _active_workflows, _workflow_to_response
-from autoops_architect.models.goal import Goal
 from autoops_architect.templates.registry import create_default_template_registry
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -18,8 +16,8 @@ _template_registry = create_default_template_registry()
 
 @router.get("", response_model=list[TemplateResponse])
 async def list_templates(
-    category: Optional[str] = Query(default=None, description="Filter by category"),
-    tag: Optional[str] = Query(default=None, description="Filter by tag"),
+    category: str | None = Query(default=None, description="Filter by category"),
+    tag: str | None = Query(default=None, description="Filter by tag"),
 ) -> list[TemplateResponse]:
     """List all available workflow templates."""
     templates = _template_registry.list(category=category)
@@ -75,7 +73,7 @@ async def get_template(template_id: str) -> TemplateResponse:
 async def instantiate_template(
     template_id: str,
     goal_description: str = Query(..., description="Goal description for the workflow"),
-    service: Optional[str] = Query(default=None, description="Target service name"),
+    service: str | None = Query(default=None, description="Target service name"),
     duration: str = Query(default="1h", description="Time window for data collection"),
 ) -> WorkflowResponse:
     """

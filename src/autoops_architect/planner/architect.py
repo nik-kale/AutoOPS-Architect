@@ -1,9 +1,8 @@
 """Architect - the meta-agent that generates workflow plans from goals."""
 
-import json
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -16,15 +15,14 @@ from autoops_architect.planner.prompts import (
     SYSTEM_PROMPT,
     format_planning_prompt,
 )
-from autoops_architect.safety.sanitizer import sanitize_goal, PromptInjectionError
+from autoops_architect.safety.sanitizer import PromptInjectionError, sanitize_goal
 
 
 class PlannerConfig(BaseModel):
     """Configuration for the Architect planner."""
 
-    llm_config: Optional[LLMConfig] = Field(
-        default=None,
-        description="LLM configuration. If None, auto-detects from environment."
+    llm_config: LLMConfig | None = Field(
+        default=None, description="LLM configuration. If None, auto-detects from environment."
     )
 
     available_tools: list[str] = Field(
@@ -38,7 +36,7 @@ class PlannerConfig(BaseModel):
             "secureMCP:jira",
             "secureMCP:slack",
         ],
-        description="List of available tool identifiers"
+        description="List of available tool identifiers",
     )
 
     default_constraints: list[str] = Field(
@@ -47,41 +45,34 @@ class PlannerConfig(BaseModel):
             "All remediation actions require human approval",
             "Keep workflows focused and actionable",
         ],
-        description="Default constraints for all planning requests"
+        description="Default constraints for all planning requests",
     )
 
     max_nodes: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum number of nodes in a workflow"
+        default=20, ge=1, le=100, description="Maximum number of nodes in a workflow"
     )
 
     enable_remediation: bool = Field(
-        default=False,
-        description="Whether to allow remediation actions in generated workflows"
+        default=False, description="Whether to allow remediation actions in generated workflows"
     )
 
     use_memory: bool = Field(
-        default=True,
-        description="Whether to retrieve similar past workflows from memory"
+        default=True, description="Whether to retrieve similar past workflows from memory"
     )
 
     memory_limit: int = Field(
         default=3,
         ge=0,
         le=10,
-        description="Maximum number of similar workflows to include as context"
+        description="Maximum number of similar workflows to include as context",
     )
 
     sanitization_mode: str = Field(
-        default="strict",
-        description="Input sanitization mode: strict, moderate, or permissive"
+        default="strict", description="Input sanitization mode: strict, moderate, or permissive"
     )
 
     block_on_injection: bool = Field(
-        default=True,
-        description="Whether to block requests when prompt injection is detected"
+        default=True, description="Whether to block requests when prompt injection is detected"
     )
 
 
@@ -106,10 +97,10 @@ class Architect:
 
     def __init__(
         self,
-        config: Optional[PlannerConfig] = None,
-        llm_client: Optional[LLMClient] = None,
-        memory_backend: Optional[Any] = None,
-        template_registry: Optional[Any] = None,
+        config: PlannerConfig | None = None,
+        llm_client: LLMClient | None = None,
+        memory_backend: Any | None = None,
+        template_registry: Any | None = None,
     ) -> None:
         """
         Initialize the Architect.
@@ -135,8 +126,8 @@ class Architect:
     async def plan(
         self,
         goal: Goal,
-        constraints: Optional[list[str]] = None,
-        similar_workflows: Optional[list[MemoryEntry]] = None,
+        constraints: list[str] | None = None,
+        similar_workflows: list[MemoryEntry] | None = None,
     ) -> WorkflowGraph:
         """
         Generate a workflow graph from a goal.
@@ -214,8 +205,8 @@ class Architect:
     def plan_sync(
         self,
         goal: Goal,
-        constraints: Optional[list[str]] = None,
-        similar_workflows: Optional[list[MemoryEntry]] = None,
+        constraints: list[str] | None = None,
+        similar_workflows: list[MemoryEntry] | None = None,
     ) -> WorkflowGraph:
         """
         Synchronous version of plan().
@@ -386,9 +377,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         for node in workflow.nodes:
             if node.tool not in known_tools:
                 # Only warn, don't fail - could be a custom tool
-                issues.append(
-                    f"Node '{node.id}' uses unknown tool '{node.tool}'"
-                )
+                issues.append(f"Node '{node.id}' uses unknown tool '{node.tool}'")
 
         # Check for remediation actions if disabled
         if not self.config.enable_remediation:
@@ -442,6 +431,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         template = self._template_registry.get(template_id)
@@ -468,6 +458,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         return [
@@ -481,7 +472,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
             for t in self._template_registry.list()
         ]
 
-    def find_matching_template(self, goal: Goal) -> Optional[str]:
+    def find_matching_template(self, goal: Goal) -> str | None:
         """
         Find a template that matches the given goal.
 
@@ -495,6 +486,7 @@ but incorporate the requested changes. Respond with the complete updated workflo
         """
         if self._template_registry is None:
             from autoops_architect.templates.registry import create_default_template_registry
+
             self._template_registry = create_default_template_registry()
 
         keywords = goal.get_keywords()

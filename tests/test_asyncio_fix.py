@@ -192,8 +192,7 @@ class TestAsyncioCompat:
 
             # Check that no DeprecationWarnings were raised
             deprecation_warnings = [
-                warning for warning in w
-                if issubclass(warning.category, DeprecationWarning)
+                warning for warning in w if issubclass(warning.category, DeprecationWarning)
             ]
             assert len(deprecation_warnings) == 0, (
                 f"Unexpected DeprecationWarnings: {deprecation_warnings}"
@@ -229,4 +228,3 @@ class TestAsyncioRunBehavior:
         # Async calls should work fine
         response = await client.complete(messages)
         assert response.content == "Async response"
-
