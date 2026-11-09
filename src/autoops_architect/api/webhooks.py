@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -30,7 +31,9 @@ class WebhookConfig(BaseModel):
     field_mapping: dict[str, str] = Field(
         default_factory=dict, description="Map webhook fields to goal parameters using JSONPath"
     )
-    secret: str | None = Field(None, description="Secret for signature verification")
+    secret: str | None = Field(
+        None, description="Secret for signature verification", exclude=True, repr=False
+    )
     enabled: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -75,28 +78,15 @@ def verify_webhook_signature(
     Returns:
         True if signature is valid.
     """
-    if source == WebhookSource.PAGERDUTY:
-        # PagerDuty uses SHA-256 HMAC
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(signature, expected)
+    digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    prefixes = {WebhookSource.GITHUB: "sha256=", WebhookSource.PAGERDUTY: "v1="}
+    expected = f"{prefixes.get(source, '')}{digest}".encode()
 
-    elif source == WebhookSource.DATADOG:
-        # Datadog uses SHA-256 HMAC
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(signature, expected)
+    # PagerDuty sends a comma-separated list while a secret is being rotated.
+    candidates = signature.split(",") if source == WebhookSource.PAGERDUTY else [signature]
 
-    elif source == WebhookSource.GITHUB:
-        # GitHub uses SHA-256 HMAC with sha256= prefix
-        expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(signature, expected)
-
-    elif source == WebhookSource.GENERIC:
-        # Generic: simple HMAC SHA-256
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(signature, expected)
-
-    else:
-        return False
+    # Compare bytes: compare_digest raises TypeError on non-ASCII str input.
+    return any(hmac.compare_digest(c.strip().encode(), expected) for c in candidates)
 
 
 def extract_field_value(payload: dict[str, Any], jsonpath: str) -> Any:
@@ -129,6 +119,8 @@ def extract_field_value(payload: dict[str, Any], jsonpath: str) -> Any:
             try:
                 index = int(index_str)
                 if field:
+                    if not isinstance(current, dict):
+                        return None
                     current = current.get(field, {})
                 if isinstance(current, list) and 0 <= index < len(current):
                     current = current[index]
@@ -197,11 +189,14 @@ def format_goal_from_template(
         >>> format_goal_from_template(template, params)
         "Investigate high alert for api"
     """
-    try:
-        return template.format(**mapped_params)
-    except KeyError:
-        # If a key is missing, return template as-is
-        return template
+
+    # Not str.format: templates would then be able to reach attributes of the
+    # values ({title.__class__}) and would raise on stray braces. Unknown
+    # placeholders are left as they are.
+    def replace(match: re.Match[str]) -> str:
+        return str(mapped_params[match[1]]) if match[1] in mapped_params else match[0]
+
+    return re.sub(r"\{(\w+)\}", replace, template)
 
 
 # Webhook source-specific payload parsers
@@ -223,11 +218,24 @@ def parse_pagerduty_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _datadog_service(tags: Any) -> str:
+    """Find the service tag in Datadog's dict, list or comma-separated tag formats."""
+    if isinstance(tags, dict):
+        return str(tags.get("service", "unknown"))
+
+    items = tags.split(",") if isinstance(tags, str) else tags if isinstance(tags, list) else []
+    for item in items:
+        key, _, value = str(item).strip().partition(":")
+        if key == "service" and value:
+            return value
+    return "unknown"
+
+
 def parse_datadog_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     """Parse Datadog webhook payload to standard format."""
     return {
         "severity": payload.get("priority", "unknown"),
-        "service": payload.get("tags", {}).get("service", "unknown"),
+        "service": _datadog_service(payload.get("tags")),
         "title": payload.get("title", ""),
         "alert_id": payload.get("id", ""),
         "status": payload.get("alert_status", ""),

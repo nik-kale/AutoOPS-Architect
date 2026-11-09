@@ -23,6 +23,8 @@ from autoops_architect.models.workflow import Node, NodeType, WorkflowGraph
 PUBLIC_ROUTES = {
     ("POST", "/api/v1/auth/login"),
     ("GET", "/api/v1/auth/permissions"),
+    # Authenticated by the request signature; see test_webhooks.py
+    ("POST", "/api/v1/webhooks/{webhook_id}/trigger"),
 }
 
 

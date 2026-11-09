@@ -15,6 +15,7 @@ from autoops_architect.api.routes import (
     memory_router,
     schedules_router,
     templates_router,
+    webhooks_router,
     workflows_router,
 )
 from autoops_architect.metrics import get_metrics
@@ -82,6 +83,7 @@ def create_app(
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
     app.include_router(schedules_router, prefix="/api/v1")
+    app.include_router(webhooks_router, prefix="/api/v1")
 
     # Metrics endpoint
     @app.get(
