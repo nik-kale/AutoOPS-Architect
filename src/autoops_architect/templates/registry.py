@@ -1,12 +1,33 @@
 """Template registry and template model definitions."""
 
 import builtins
+import re
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from autoops_architect.models.workflow import Edge, Node, NodeType, WorkflowGraph
+
+
+_PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+def _substitute(value: Any, values: dict[str, Any]) -> Any:
+    """Replace {{name}} placeholders throughout a value, leaving unknown ones."""
+    if isinstance(value, dict):
+        return {key: _substitute(item, values) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_substitute(item, values) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    # A value that is only a placeholder takes the parameter's own type
+    whole = _PLACEHOLDER.fullmatch(value.strip())
+    if whole and whole[1] in values:
+        return values[whole[1]]
+
+    return _PLACEHOLDER.sub(lambda m: str(values.get(m[1], m[0])), value)
 
 
 class WorkflowTemplate(BaseModel):
@@ -72,31 +93,16 @@ class WorkflowTemplate(BaseModel):
             params["service"] = service
         params.update(kwargs)
 
+        # A parameter still set to its own placeholder has not been given a value
+        params = {key: value for key, value in params.items() if value != f"{{{{{key}}}}}"}
+        values = {"service": "unknown-service", **params}
+
         # Create nodes with substitutions
         instantiated_nodes = []
         for node in self.nodes:
             node_dict = node.model_dump()
-
-            # Substitute service in params
-            if "params" in node_dict:
-                for key, value in node_dict["params"].items():
-                    if isinstance(value, str) and "{{service}}" in value:
-                        node_dict["params"][key] = value.replace(
-                            "{{service}}", params.get("service", "unknown-service")
-                        )
-                    elif value == "{{service}}":
-                        node_dict["params"][key] = params.get("service", "unknown-service")
-
-            # Substitute in name and description
-            if "{{service}}" in node_dict.get("name", ""):
-                node_dict["name"] = node_dict["name"].replace(
-                    "{{service}}", params.get("service", "service")
-                )
-            if "{{service}}" in node_dict.get("description", ""):
-                node_dict["description"] = node_dict["description"].replace(
-                    "{{service}}", params.get("service", "service")
-                )
-
+            for field in ("name", "description", "params"):
+                node_dict[field] = _substitute(node_dict[field], values)
             instantiated_nodes.append(Node.model_validate(node_dict))
 
         # Create the workflow

@@ -134,7 +134,7 @@ async def instantiate_template(
     template_id: str,
     goal_description: str = Query(..., description="Goal description for the workflow"),
     service: str | None = Query(default=None, description="Target service name"),
-    duration: str = Query(default="1h", description="Time window for data collection"),
+    duration: str | None = Query(default=None, description="Time window for data collection"),
 ) -> WorkflowResponse:
     """
     Instantiate a workflow from a template.
@@ -147,10 +147,11 @@ async def instantiate_template(
         raise HTTPException(status_code=404, detail="Template not found")
 
     try:
+        overrides = {"duration": duration} if duration else {}
         workflow = template.instantiate(
             goal_description=goal_description,
             service=service,
-            duration=duration,
+            **overrides,
         )
     except Exception as e:
         raise HTTPException(

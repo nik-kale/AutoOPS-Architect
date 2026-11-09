@@ -348,7 +348,7 @@ To contribute a playbook to the community:
 1. Create your template YAML
 2. Test with `autoops templates validate your-template.yaml`
 3. Test execution with `--dry-run`
-4. Submit a PR adding the template to `/templates/`
+4. Submit a PR adding the template to `src/autoops_architect/templates/builtin/`
 5. Include documentation in the PR description
 
 ### Submission Guidelines

@@ -16,21 +16,9 @@ def get_builtin_templates_dir() -> Path:
     Get the directory containing built-in YAML templates.
 
     Returns:
-        Path to the templates/ directory in the project root.
+        Path to the YAML templates shipped inside the package.
     """
-    # Try to find relative to this file
-    module_dir = Path(__file__).parent.parent.parent.parent
-    templates_dir = module_dir / "templates"
-    if templates_dir.exists():
-        return templates_dir
-
-    # Try current working directory
-    cwd_templates = Path.cwd() / "templates"
-    if cwd_templates.exists():
-        return cwd_templates
-
-    # Return module dir path even if it doesn't exist yet
-    return templates_dir
+    return Path(__file__).parent / "builtin"
 
 
 def get_project_templates_dir() -> Path | None:
