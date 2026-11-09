@@ -59,6 +59,12 @@ class TestDeployment:
         assert "*.whl[web]" not in dockerfile
         assert '"${wheel}[web]"' in dockerfile
 
+    def test_build_context_includes_files_the_image_copies(self) -> None:
+        ignored = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+        assert "!README.md" in ignored
+        assert "LICENSE" not in ignored
+
     def test_redis_is_not_published_to_the_host(self) -> None:
         assert "ports" not in self.compose()["services"]["redis"]
 

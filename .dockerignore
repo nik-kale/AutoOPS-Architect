@@ -40,7 +40,7 @@ htmlcov/
 # Documentation
 docs/
 *.md
-LICENSE
+!README.md
 
 # CI/CD
 .github/
