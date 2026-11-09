@@ -539,9 +539,15 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
     </div>
 
     <script>
-        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' });
 
         const API_BASE = '/api/v1';
+        const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+        // Workflow text comes from goals, webhooks and LLM output: never trust it as HTML.
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
+        }
         let currentWorkflow = null;
         let selectedTemplate = null;
         let disabledNodes = new Set();
@@ -584,9 +590,9 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
 
                 const container = document.getElementById('templates-list');
                 container.innerHTML = templates.map(t => `
-                    <div class="template-card" data-id="${t.id}">
-                        <div class="template-name">${t.name}</div>
-                        <div class="template-desc">${t.description}</div>
+                    <div class="template-card" data-id="${esc(t.id)}">
+                        <div class="template-name">${esc(t.name)}</div>
+                        <div class="template-desc">${esc(t.description)}</div>
                     </div>
                 `).join('');
 
@@ -682,7 +688,10 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
         async function displayWorkflow(workflow) {
             // Render Mermaid diagram
             const container = document.getElementById('diagram-container');
-            container.innerHTML = `<pre class="mermaid">${workflow.mermaid_diagram}</pre>`;
+            const diagram = document.createElement('pre');
+            diagram.className = 'mermaid';
+            diagram.textContent = workflow.mermaid_diagram;
+            container.replaceChildren(diagram);
             await mermaid.run();
 
             // Display nodes
@@ -690,16 +699,16 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
             const nodeList = document.getElementById('node-list');
             nodeList.classList.remove('hidden');
             nodeList.innerHTML = workflow.nodes.map(node => `
-                <div class="node-item" data-id="${node.id}">
+                <div class="node-item" data-id="${esc(node.id)}">
                     <div class="node-header">
                         <span class="node-name">
-                            <input type="checkbox" class="node-toggle" data-id="${node.id}" checked>
-                            ${node.name}
+                            <input type="checkbox" class="node-toggle" data-id="${esc(node.id)}" checked>
+                            ${esc(node.name)}
                             ${node.requires_human_approval ? '<span class="approval-badge">Approval</span>' : ''}
                         </span>
-                        <span class="node-type">${node.type}</span>
+                        <span class="node-type">${esc(node.type)}</span>
                     </div>
-                    <div class="node-description">${node.description || 'No description'}</div>
+                    <div class="node-description">${esc(node.description || 'No description')}</div>
                 </div>
             `).join('');
 
@@ -744,7 +753,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                 });
 
                 const execution = await res.json();
-                log.innerHTML += `<div class="log-entry info">Execution started: ${execution.execution_id}</div>`;
+                log.innerHTML += `<div class="log-entry info">Execution started: ${esc(execution.execution_id)}</div>`;
 
                 // Stream events
                 const eventSource = new EventSource(
@@ -767,7 +776,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                         ? `[${data.event_type}] ${data.node_name}: ${data.status}`
                         : `[${data.event_type}] ${data.message || data.status}`;
 
-                    log.innerHTML += `<div class="log-entry ${className}">${message}</div>`;
+                    log.innerHTML += `<div class="log-entry ${className}">${esc(message)}</div>`;
                     log.scrollTop = log.scrollHeight;
                 };
 
@@ -777,7 +786,7 @@ Example: Investigate elevated 5xx errors for checkout-api service in production"
                 };
 
             } catch (e) {
-                log.innerHTML += `<div class="log-entry error">Error: ${e.message}</div>`;
+                log.innerHTML += `<div class="log-entry error">Error: ${esc(e.message)}</div>`;
             }
         }
 

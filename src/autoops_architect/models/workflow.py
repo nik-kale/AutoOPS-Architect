@@ -40,6 +40,21 @@ class NodeType(str, Enum):
     HUMAN_REVIEW = "human_review"
 
 
+def _single_line(text: str) -> str:
+    """Collapse line breaks, which end a statement in the diagram languages."""
+    return " ".join(text.splitlines())
+
+
+def _mermaid_text(text: str) -> str:
+    """Make text safe inside a double-quoted Mermaid string."""
+    return _single_line(text).replace('"', "#quot;")
+
+
+def _dot_text(text: str) -> str:
+    """Make text safe inside a double-quoted Graphviz string."""
+    return _single_line(text).replace("\\", "\\\\").replace('"', '\\"')
+
+
 # Node types that require human approval by default
 APPROVAL_REQUIRED_TYPES = {
     NodeType.SERVICE_RESTART,
@@ -349,8 +364,7 @@ class WorkflowGraph(BaseModel):
 
         # Add nodes
         for node in self.nodes:
-            # Escape special characters in name
-            safe_name = node.name.replace('"', "'")
+            safe_name = _mermaid_text(node.name)
             shape_start, shape_end = ("[", "]")
 
             # Use different shapes for different node types
@@ -367,7 +381,7 @@ class WorkflowGraph(BaseModel):
         for edge in self.edges:
             arrow = "-->"
             if edge.condition:
-                arrow = f"-->|{edge.condition}|"
+                arrow = f'-->|"{_mermaid_text(edge.condition)}"|'
             lines.append(f"    {edge.from_node_id} {arrow} {edge.to_node_id}")
 
         return "\n".join(lines)
@@ -408,7 +422,7 @@ class WorkflowGraph(BaseModel):
 
         # Add nodes
         for node in self.nodes:
-            safe_name = node.name.replace('"', '\\"')
+            safe_name = _dot_text(node.name)
             color = type_colors.get(node.type, "#ffffff")
 
             # Mark approval-required nodes with a different border
@@ -428,7 +442,7 @@ class WorkflowGraph(BaseModel):
         for edge in self.edges:
             label = ""
             if edge.condition:
-                safe_condition = edge.condition.replace('"', '\\"')
+                safe_condition = _dot_text(edge.condition)
                 label = f' [label="{safe_condition}"]'
             lines.append(f'    "{edge.from_node_id}" -> "{edge.to_node_id}"{label};')
 

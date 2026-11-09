@@ -9,6 +9,11 @@ import yaml
 from autoops_architect.models.workflow import WorkflowGraph
 
 
+def _literal_for_actions(text: str) -> str:
+    """Stop GitHub Actions evaluating ${{ }} in text that came from a goal or an LLM."""
+    return text.replace("${{", "${{ '${{' }}")
+
+
 class ExportFormat(str, Enum):
     """Supported export formats."""
 
@@ -199,7 +204,7 @@ class WorkflowExporter:
             node_deps[edge.to_node_id].append(edge.from_node_id)
 
         gha_workflow = {
-            "name": self.workflow.name,
+            "name": _literal_for_actions(self.workflow.name),
             "on": {
                 "workflow_dispatch": {
                     "inputs": {
@@ -214,7 +219,7 @@ class WorkflowExporter:
             },
             "env": {
                 "WORKFLOW_ID": self.workflow.id,
-                "GOAL": self.workflow.goal_description,
+                "GOAL": _literal_for_actions(self.workflow.goal_description),
             },
             "jobs": {},
         }
@@ -239,15 +244,14 @@ class WorkflowExporter:
                         "run": "pip install autoops-architect",
                     },
                     {
-                        "name": f"Execute: {node.name}",
-                        "run": (
-                            f"autoops run-node "
-                            f"--tool '{node.tool or 'echo'}' "
-                            f"--params '{json.dumps(node.params)}'"
-                        ),
+                        "name": _literal_for_actions(f"Execute: {node.name}"),
+                        # Values travel through env so the shell never parses them.
+                        "run": 'autoops run-node --tool "$NODE_TOOL" --params "$NODE_PARAMS"',
                         "env": {
                             "NODE_ID": node.id,
                             "NODE_TYPE": node.type.value,
+                            "NODE_TOOL": _literal_for_actions(node.tool or "echo"),
+                            "NODE_PARAMS": _literal_for_actions(json.dumps(node.params)),
                         },
                     },
                 ],
