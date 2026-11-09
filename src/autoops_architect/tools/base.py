@@ -1,10 +1,13 @@
 """Base tool interface and registry for AutoOps Architect."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 
 
 class ToolStatus(str, Enum):
@@ -176,15 +179,8 @@ class Tool(ABC):
         Returns:
             ToolResult containing the execution outcome.
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(self.execute(params, context))
+        ensure_no_running_loop("execute_sync", "execute")
+        return asyncio.run(self.execute(params, context))
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         """

@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
+
 
 class LLMProvider(str, Enum):
     """Supported LLM providers."""
@@ -136,22 +138,10 @@ class LLMClient(ABC):
         Synchronous wrapper for complete().
 
         Uses asyncio.run() to execute the async method in a new event loop.
-        Compatible with Python 3.11+ and nested async contexts.
         """
         import asyncio
 
-        try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            # If we reach here, we're in an async context - this is an error
-            raise RuntimeError(
-                "sync_complete() cannot be called from an async context. "
-                "Use await complete() instead."
-            )
-        except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            pass
-
+        ensure_no_running_loop("sync_complete", "complete")
         return asyncio.run(self.complete(messages, **kwargs))
 
     def sync_complete_json(
@@ -164,22 +154,10 @@ class LLMClient(ABC):
         Synchronous wrapper for complete_json().
 
         Uses asyncio.run() to execute the async method in a new event loop.
-        Compatible with Python 3.11+ and nested async contexts.
         """
         import asyncio
 
-        try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            # If we reach here, we're in an async context - this is an error
-            raise RuntimeError(
-                "sync_complete_json() cannot be called from an async context. "
-                "Use await complete_json() instead."
-            )
-        except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            pass
-
+        ensure_no_running_loop("sync_complete_json", "complete_json")
         return asyncio.run(self.complete_json(messages, schema=schema, **kwargs))
 
 

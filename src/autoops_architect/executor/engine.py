@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 from autoops_architect.logging import LogContext, get_logger
 from autoops_architect.models.execution import (
     ExecutionStatus,
@@ -752,7 +753,6 @@ class WorkflowExecutor:
         Synchronous wrapper for execute().
 
         Uses asyncio.run() to execute the async method in a new event loop.
-        Compatible with Python 3.11+ and nested async contexts.
 
         Args:
             workflow: The workflow to execute.
@@ -760,19 +760,11 @@ class WorkflowExecutor:
 
         Returns:
             WorkflowRunResult with all node results.
-        """
-        try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            # If we reach here, we're in an async context - this is an error
-            raise RuntimeError(
-                "execute_sync() cannot be called from an async context. "
-                "Use await execute() instead."
-            )
-        except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            pass
 
+        Raises:
+            RuntimeError: If called from inside a running event loop.
+        """
+        ensure_no_running_loop("execute_sync", "execute")
         return asyncio.run(self.execute(workflow, initial_context=initial_context))
 
     async def execute_single_node(

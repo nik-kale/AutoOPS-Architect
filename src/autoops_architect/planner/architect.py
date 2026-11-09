@@ -1,11 +1,13 @@
 """Architect - the meta-agent that generates workflow plans from goals."""
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autoops_architect.asyncio_utils import ensure_no_running_loop
 from autoops_architect.llm.base import LLMClient, LLMConfig, LLMMessage
 from autoops_architect.llm.providers import get_llm_client
 from autoops_architect.models.goal import Goal
@@ -218,16 +220,12 @@ class Architect:
 
         Returns:
             A WorkflowGraph ready for execution.
+
+        Raises:
+            RuntimeError: If called from inside a running event loop.
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
+        ensure_no_running_loop("plan_sync", "plan")
+        return asyncio.run(
             self.plan(goal, constraints=constraints, similar_workflows=similar_workflows)
         )
 
