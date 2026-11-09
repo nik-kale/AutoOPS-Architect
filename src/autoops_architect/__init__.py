@@ -8,7 +8,7 @@ This package provides tools to:
 - Learn from past executions to improve future planning
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 
 from autoops_architect.models.execution import ExecutionResult, ExecutionStatus, NodeResult
 from autoops_architect.models.goal import Goal

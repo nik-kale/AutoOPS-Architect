@@ -9,7 +9,7 @@ services:
     image: autoops-architect:latest
     container_name: autoops-architect
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       # LLM Configuration
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -26,6 +26,13 @@ services:
       
       # Redis (if using cache backend)
       REDIS_URL: redis://redis:6379/0
+
+      # Authentication (recommended whenever the port is reachable by others)
+      AUTOOPS_AUTH_ENABLED: ${AUTOOPS_AUTH_ENABLED:-false}
+      AUTOOPS_SECRET_KEY: ${AUTOOPS_SECRET_KEY:-}
+      AUTOOPS_CREATE_ADMIN: ${AUTOOPS_CREATE_ADMIN:-false}
+      AUTOOPS_ADMIN_PASSWORD: ${AUTOOPS_ADMIN_PASSWORD:-}
+      AUTOOPS_CORS_ORIGINS: ${AUTOOPS_CORS_ORIGINS:-}
     volumes:
       # Persist cache and data
       - autoops-cache:/home/autoops/.cache/autoops-architect
@@ -47,8 +54,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: autoops-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
     networks:

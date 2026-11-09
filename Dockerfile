@@ -2,7 +2,7 @@
 # Produces a slim production image with all necessary dependencies
 
 # Builder stage - install dependencies and build wheel
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
@@ -45,9 +45,10 @@ RUN useradd -m -u 1000 autoops && \
 COPY --from=builder /build/dist/*.whl /tmp/
 
 # Install AutoOps Architect with web extras
-RUN pip install --no-cache-dir /tmp/*.whl[web] && \
-    rm /tmp/*.whl && \
-    pip cache purge
+# Expand the wheel path first: a glob with the extras appended never matches.
+RUN wheel=$(ls /tmp/*.whl) && \
+    pip install --no-cache-dir "${wheel}[web]" && \
+    rm "$wheel"
 
 # Switch to non-root user
 USER autoops

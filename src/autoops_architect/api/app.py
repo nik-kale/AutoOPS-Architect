@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
+from autoops_architect import __version__
 from autoops_architect.api.auth import requires
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import (
@@ -19,9 +20,6 @@ from autoops_architect.api.routes import (
     workflows_router,
 )
 from autoops_architect.metrics import get_metrics
-
-# Package version
-__version__ = "0.1.0"
 
 
 @asynccontextmanager

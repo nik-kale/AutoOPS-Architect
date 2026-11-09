@@ -18,7 +18,14 @@ from autoops_architect.logging import get_logger
 logger = get_logger(__name__)
 
 # Configuration
-SECRET_KEY = os.getenv("AUTOOPS_SECRET_KEY", secrets.token_urlsafe(32))
+
+
+def _load_secret_key() -> str:
+    """Read the JWT signing key; an empty value (as compose passes) means unset."""
+    return os.getenv("AUTOOPS_SECRET_KEY") or secrets.token_urlsafe(32)
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTOOPS_TOKEN_EXPIRE_MINUTES", "60"))
 API_KEY_HEADER_NAME = "X-API-Key"
