@@ -8,10 +8,14 @@ from typing import Any
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Security, params, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError as JWTError
 from pydantic import BaseModel, Field
+
+from autoops_architect.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Configuration
 SECRET_KEY = os.getenv("AUTOOPS_SECRET_KEY", secrets.token_urlsafe(32))
@@ -217,7 +221,7 @@ async def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account is disabled",
             )
-        return User(**user.dict())
+        return User(**user.model_dump())
 
     # No valid authentication found
     raise HTTPException(
@@ -250,6 +254,36 @@ def require_permission(permission: str):
     return check_permission
 
 
+def auth_enabled() -> bool:
+    """Whether API authentication is switched on for this process."""
+    return os.getenv("AUTOOPS_AUTH_ENABLED", "false").lower() == "true"
+
+
+def requires(permission: str) -> params.Depends:
+    """
+    Route dependency that enforces a permission whenever authentication is enabled.
+
+    The setting is read per request so that one app instance cannot end up with
+    some routes protected and others not, depending on import order.
+    """
+
+    async def check(
+        bearer_token: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+        api_key: str | None = Security(api_key_header),
+    ) -> None:
+        if not auth_enabled():
+            return
+
+        user = await get_current_user(bearer_token, api_key)
+        if not has_permission(user, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: {permission} required",
+            )
+
+    return Depends(check)
+
+
 def require_role(role: Role):
     """Dependency to require a specific role."""
 
@@ -264,9 +298,8 @@ def require_role(role: Role):
     return check_role
 
 
-# Helper function to create a default admin user (for setup)
-def create_default_admin(username: str = "admin", password: str = "admin") -> UserInDB:
-    """Create a default admin user (for development/setup only)."""
+def create_default_admin(username: str, password: str) -> UserInDB:
+    """Create an admin user with the given credentials."""
     admin_user = UserInDB(
         username=username,
         email=f"{username}@example.com",
@@ -302,8 +335,24 @@ def create_api_key(
     return key, api_key_data
 
 
-# Initialize with a default admin user if none exists (for development)
-if not fake_users_db and os.getenv("AUTOOPS_CREATE_ADMIN", "false").lower() == "true":
-    default_admin = create_default_admin()
-    print(f"Created default admin user: {default_admin.username}")
-    print("Default password: admin (CHANGE THIS IN PRODUCTION!)")
+def bootstrap_admin_from_env() -> UserInDB | None:
+    """
+    Create the first admin from AUTOOPS_ADMIN_USERNAME and AUTOOPS_ADMIN_PASSWORD.
+
+    Only runs when AUTOOPS_CREATE_ADMIN=true and no users exist. There is no
+    default password: without AUTOOPS_ADMIN_PASSWORD no account is created.
+    """
+    if os.getenv("AUTOOPS_CREATE_ADMIN", "false").lower() != "true" or fake_users_db:
+        return None
+
+    password = os.getenv("AUTOOPS_ADMIN_PASSWORD")
+    if not password:
+        logger.warning("admin_bootstrap_skipped", reason="AUTOOPS_ADMIN_PASSWORD is not set")
+        return None
+
+    admin = create_default_admin(os.getenv("AUTOOPS_ADMIN_USERNAME", "admin"), password)
+    logger.info("admin_bootstrap_completed", username=admin.username)
+    return admin
+
+
+bootstrap_admin_from_env()

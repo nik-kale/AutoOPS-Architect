@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import MemoryEntryResponse
 from autoops_architect.memory.backend import get_memory_backend
 
@@ -13,7 +14,7 @@ def _get_backend():
     return get_memory_backend(backend_type="json")
 
 
-@router.get("", response_model=list[MemoryEntryResponse])
+@router.get("", response_model=list[MemoryEntryResponse], dependencies=[requires("read:memory")])
 async def list_memory_entries(
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
@@ -40,7 +41,9 @@ async def list_memory_entries(
     ]
 
 
-@router.get("/search", response_model=list[MemoryEntryResponse])
+@router.get(
+    "/search", response_model=list[MemoryEntryResponse], dependencies=[requires("read:memory")]
+)
 async def search_memory(
     keywords: str = Query(..., description="Comma-separated keywords to search"),
     limit: int = Query(default=5, le=20),
@@ -76,7 +79,7 @@ async def search_memory(
     ]
 
 
-@router.get("/stats", response_model=dict)
+@router.get("/stats", response_model=dict, dependencies=[requires("read:memory")])
 async def get_memory_stats() -> dict:
     """Get memory statistics."""
     backend = _get_backend()
@@ -113,7 +116,9 @@ async def get_memory_stats() -> dict:
     }
 
 
-@router.get("/{entry_id}", response_model=MemoryEntryResponse)
+@router.get(
+    "/{entry_id}", response_model=MemoryEntryResponse, dependencies=[requires("read:memory")]
+)
 async def get_memory_entry(entry_id: str) -> MemoryEntryResponse:
     """Get a specific memory entry by ID."""
     backend = _get_backend()
@@ -137,7 +142,7 @@ async def get_memory_entry(entry_id: str) -> MemoryEntryResponse:
     )
 
 
-@router.delete("/{entry_id}")
+@router.delete("/{entry_id}", dependencies=[requires("delete:memory")])
 async def delete_memory_entry(entry_id: str) -> dict[str, str]:
     """Delete a memory entry."""
     backend = _get_backend()

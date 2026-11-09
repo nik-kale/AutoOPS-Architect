@@ -4,6 +4,7 @@ import re
 
 from fastapi import APIRouter, HTTPException, Query
 
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import TemplateResponse, WorkflowResponse
 from autoops_architect.api.routes.workflows import _active_workflows, _workflow_to_response
 from autoops_architect.templates.registry import create_default_template_registry
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 _template_registry = create_default_template_registry()
 
 
-@router.get("", response_model=list[TemplateResponse])
+@router.get("", response_model=list[TemplateResponse], dependencies=[requires("read:templates")])
 async def list_templates(
     category: str | None = Query(default=None, description="Filter by category"),
     tag: str | None = Query(default=None, description="Filter by tag"),
@@ -52,7 +53,7 @@ def _extract_template_variables(nodes: list) -> list[str]:
     return sorted(variables)
 
 
-@router.get("/categories", response_model=list[str])
+@router.get("/categories", response_model=list[str], dependencies=[requires("read:templates")])
 async def list_categories() -> list[str]:
     """List all template categories."""
     templates = _template_registry.list()
@@ -60,7 +61,9 @@ async def list_categories() -> list[str]:
     return categories
 
 
-@router.get("/search", response_model=list[TemplateResponse])
+@router.get(
+    "/search", response_model=list[TemplateResponse], dependencies=[requires("read:templates")]
+)
 async def search_templates(
     q: str = Query(..., min_length=2, description="Search query"),
 ) -> list[TemplateResponse]:
@@ -103,7 +106,9 @@ async def search_templates(
     ]
 
 
-@router.get("/{template_id}", response_model=TemplateResponse)
+@router.get(
+    "/{template_id}", response_model=TemplateResponse, dependencies=[requires("read:templates")]
+)
 async def get_template(template_id: str) -> TemplateResponse:
     """Get a specific template by ID."""
     template = _template_registry.get(template_id)
@@ -120,7 +125,11 @@ async def get_template(template_id: str) -> TemplateResponse:
     )
 
 
-@router.post("/{template_id}/instantiate", response_model=WorkflowResponse)
+@router.post(
+    "/{template_id}/instantiate",
+    response_model=WorkflowResponse,
+    dependencies=[requires("create:workflows")],
+)
 async def instantiate_template(
     template_id: str,
     goal_description: str = Query(..., description="Goal description for the workflow"),

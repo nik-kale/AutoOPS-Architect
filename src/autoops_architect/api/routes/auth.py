@@ -73,7 +73,7 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> L
         access_token=access_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # In seconds
-        user=User(**user.dict()),
+        user=User(**user.model_dump()),
     )
 
 

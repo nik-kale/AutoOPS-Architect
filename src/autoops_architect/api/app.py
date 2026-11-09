@@ -1,5 +1,6 @@
 """Main FastAPI application for AutoOps Architect."""
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
+from autoops_architect.api.auth import requires
 from autoops_architect.api.models import HealthResponse
 from autoops_architect.api.routes import (
     auth_router,
@@ -42,7 +44,8 @@ def create_app(
     Args:
         title: Application title.
         debug: Enable debug mode.
-        cors_origins: Allowed CORS origins.
+        cors_origins: Allowed CORS origins. Defaults to AUTOOPS_CORS_ORIGINS
+            (comma-separated), or none.
 
     Returns:
         Configured FastAPI application.
@@ -60,14 +63,15 @@ def create_app(
         redoc_url="/redoc",
     )
 
-    # Configure CORS
+    # The bundled UI is same-origin, so no cross-origin access is needed by default.
     if cors_origins is None:
-        cors_origins = ["*"]
+        configured = os.getenv("AUTOOPS_CORS_ORIGINS", "")
+        cors_origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -80,7 +84,12 @@ def create_app(
     app.include_router(schedules_router, prefix="/api/v1")
 
     # Metrics endpoint
-    @app.get("/metrics", include_in_schema=False, tags=["system"])
+    @app.get(
+        "/metrics",
+        include_in_schema=False,
+        tags=["system"],
+        dependencies=[requires("read:health")],
+    )
     async def metrics() -> Response:
         """Prometheus metrics endpoint."""
         content, content_type = get_metrics()
