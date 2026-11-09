@@ -9,11 +9,23 @@ These tools provide integration with:
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 import httpx
 
 from autoops_architect.tools.base import Tool, ToolConfig, ToolResult
+
+
+_TIMEFRAME_UNIT_SECONDS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def _timeframe_seconds(timeframe: str) -> int:
+    """Convert a timeframe such as '30m', '6h' or '1d' to seconds."""
+    unit = _TIMEFRAME_UNIT_SECONDS.get(timeframe[-1:])
+    if unit is None or not timeframe[:-1].isdigit():
+        raise ValueError(f"Unsupported timeframe: {timeframe!r}")
+    return int(timeframe[:-1]) * unit
 
 
 class AutoRCATool(Tool):
@@ -949,10 +961,8 @@ class DatadogTool(Tool):
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             if action == "query_metrics":
-                # Convert timeframe to timestamps
-                now = int(asyncio.get_event_loop().time())
-                hours = int(timeframe.rstrip("h"))
-                from_ts = now - (hours * 3600)
+                now = int(time.time())
+                from_ts = now - _timeframe_seconds(timeframe)
 
                 response = await client.get(
                     f"{base_url}/api/v1/query",
@@ -974,9 +984,10 @@ class DatadogTool(Tool):
                     headers=headers,
                 )
             else:
+                now = int(time.time())
                 response = await client.get(
                     f"{base_url}/api/v1/events",
-                    params={"start": "now-1h", "end": "now"},
+                    params={"start": now - _timeframe_seconds(timeframe), "end": now},
                     headers=headers,
                 )
 
